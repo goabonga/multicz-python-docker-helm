@@ -1,0 +1,32 @@
+[project]
+commit_convention = "conventional"
+tag_format = "{component}-v{version}"
+initial_version = "0.0.0"
+
+# api: the FastAPI application. The image tag mirrors `version`, and
+# the chart's `appVersion` mirrors it too — so a feature commit on the
+# Python source bumps `api`, retags the docker image, and (via the
+# mirror cascade) patch-bumps the chart so its packaged artifact pins
+# the new appVersion immutably.
+[components.api]
+paths      = ["src/**", "pyproject.toml", "tests/**", "Dockerfile"]
+bump_files = [{ file = "pyproject.toml", key = "project.version" }]
+mirrors    = [{ file = "charts/myapp/Chart.yaml", key = "appVersion" }]
+changelog  = "CHANGELOG.md"
+post_bump  = ["uv lock"]
+
+[[components.api.artifacts]]
+type = "docker"
+ref  = "ghcr.io/example/myapp:{version}"
+
+# chart: the Helm chart. Bumps directly when chart templates change,
+# and patch-bumps automatically when api's appVersion mirror lands
+# (mirror cascade — keeps `myapp-X.Y.Z.tgz` immutable).
+[components.chart]
+paths      = ["charts/myapp/**"]
+bump_files = [{ file = "charts/myapp/Chart.yaml", key = "version" }]
+changelog  = "charts/myapp/CHANGELOG.md"
+
+[[components.chart.artifacts]]
+type = "helm"
+ref  = "myapp-{version}.tgz"

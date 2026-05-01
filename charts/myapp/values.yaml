@@ -1,0 +1,16 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/example/myapp
+  pullPolicy: IfNotPresent
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
