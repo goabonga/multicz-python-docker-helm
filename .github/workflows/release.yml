@@ -50,8 +50,7 @@ jobs:
           git config user.email "${EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 
       - name: Install multicz
-        # Once multicz lands on PyPI: `uv tool install multicz`.
-        run: uv tool install git+https://github.com/goabonga/multicz
+        run: uv tool install multicz
 
       - name: Plan
         id: plan

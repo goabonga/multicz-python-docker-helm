@@ -31,8 +31,7 @@ jobs:
         run: uv run ruff check src tests
 
       - name: Install multicz
-        # Once multicz lands on PyPI: `uv tool install multicz`.
-        run: uv tool install git+https://github.com/goabonga/multicz
+        run: uv tool install multicz
 
       - name: Validate multicz.toml
         run: multicz validate --strict
