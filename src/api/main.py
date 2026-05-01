@@ -1,3 +1,4 @@
+from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
@@ -5,6 +6,7 @@ from fastapi import FastAPI
 app = FastAPI(title="multicz-demo")
 
 
+@lru_cache(maxsize=1)
 def _app_version() -> str:
     try:
         return version("api")
