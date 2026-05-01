@@ -1,0 +1,131 @@
+name: release
+
+# Demo release pipeline driven by multicz.
+#
+# Runs after the `ci` workflow finishes green on main:
+#   1. plan the release (skip the rest if nothing pending)
+#   2. bump pyproject.toml + Chart.yaml + uv.lock + CHANGELOGs, commit,
+#      tag, push (one tag per bumped component, e.g. `api-v0.1.0` and
+#      `chart-v0.1.1`)
+#   3. push the docker image to ghcr.io tagged with the new `api`
+#      version (only when `api` actually bumped)
+#   4. package and push the Helm chart to ghcr.io OCI registry tagged
+#      with the new `chart` version (only when `chart` actually bumped
+#      — typically every api bump via the mirror cascade)
+#   5. open one GitHub Release per new tag, with notes from
+#      `multicz release-notes`
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write   # push the release commit and tags
+  packages: write   # push docker image + helm chart to ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          !startsWith(github.event.workflow_run.head_commit.message, 'chore(release)') }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Configure git
+        run: |
+          NAME="${{ github.event.workflow_run.head_commit.author.name }}"
+          EMAIL="${{ github.event.workflow_run.head_commit.author.email }}"
+          git config user.name  "${NAME:-github-actions[bot]}"
+          git config user.email "${EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
+
+      - name: Install multicz
+        # Once multicz lands on PyPI: `uv tool install multicz`.
+        run: uv tool install git+https://github.com/goabonga/multicz
+
+      - name: Plan
+        id: plan
+        run: |
+          multicz plan --summary "$GITHUB_STEP_SUMMARY" \
+            --output json | tee /tmp/plan.json
+          if [ "$(jq '.bumps | length' /tmp/plan.json)" = "0" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "no release pending"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump, commit, tag, push
+        id: bump
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          multicz bump --commit --tag --push \
+            --summary "$GITHUB_STEP_SUMMARY" --output json | tee /tmp/release.json
+          API=$(jq -r '.bumps.api.next_version // empty' /tmp/release.json)
+          CHART=$(jq -r '.bumps.chart.next_version // empty' /tmp/release.json)
+          echo "api_version=$API"     >> "$GITHUB_OUTPUT"
+          echo "chart_version=$CHART" >> "$GITHUB_OUTPUT"
+
+      # ghcr.io owners must be lowercase; GitHub usernames usually are
+      # already, but normalise anyway so forks under mixed-case org
+      # names don't break.
+      - name: Compute lowercase owner
+        if: steps.plan.outputs.release == 'true'
+        id: owner
+        run: |
+          echo "value=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Login to ghcr.io
+        if: steps.bump.outputs.api_version != '' || steps.bump.outputs.chart_version != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.bump.outputs.api_version != ''
+
+      - name: Build and push image
+        if: steps.bump.outputs.api_version != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}
+            ghcr.io/${{ steps.owner.outputs.value }}/myapp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: azure/setup-helm@v4
+        if: steps.bump.outputs.chart_version != ''
+
+      - name: Package and push Helm chart
+        if: steps.bump.outputs.chart_version != ''
+        run: |
+          helm package charts/myapp --destination /tmp
+          echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
+            -u '${{ github.actor }}' --password-stdin
+          helm push /tmp/myapp-${{ steps.bump.outputs.chart_version }}.tgz \
+            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
+
+      - name: Create GitHub Releases
+        if: steps.plan.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for tag in $(git tag --points-at HEAD); do
+            multicz release-notes --tag "$tag" \
+              | gh release create "$tag" --title "$tag" --notes-file -
+          done
