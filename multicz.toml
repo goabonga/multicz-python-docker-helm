@@ -36,3 +36,21 @@ changelog  = "charts/myapp/CHANGELOG.md"
 [[components.chart.artifacts]]
 type = "helm"
 ref  = "myapp-{version}.tgz"
+
+# web: vanilla TypeScript frontend (Vite), shipped as an nginx-based
+# Docker image. Independent of api/chart — own version, own changelog.
+# Both `package.json:version` and `src/version.ts:VERSION` stay in sync,
+# the second via the regex escape hatch (TS isn't a structured-config
+# format multicz parses).
+[components.web]
+paths      = ["web/**"]
+bump_files = [
+    { file = "web/package.json", key = "version" },
+    { file = "web/src/version.ts", key = 'regex:export const VERSION\s*=\s*"([^"]+)"' },
+]
+changelog  = "web/CHANGELOG.md"
+post_bump  = ["npm --prefix web install --package-lock-only"]
+
+[[components.web.artifacts]]
+type = "docker"
+ref  = "ghcr.io/example/web:{version}"
