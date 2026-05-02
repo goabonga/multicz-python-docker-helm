@@ -109,7 +109,7 @@ jobs:
 
       - name: Vitest
         run: |
-          npm test 2>&1 | tee /tmp/vitest.out
+          npm test -- --no-color 2>&1 | tee /tmp/vitest.out
           {
             echo "## js"
             echo
