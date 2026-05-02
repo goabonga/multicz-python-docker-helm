@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.1.0] - 2026-05-02
+
+### Features
+
+- **chart-web**: add optional networking.k8s.io/v1 Ingress (`fd23722`)
+
 ## [0.0.4] - 2026-05-02
 
 ### Dependencies
