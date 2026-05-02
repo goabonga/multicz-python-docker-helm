@@ -6,7 +6,60 @@ on:
     branches: [main]
 
 jobs:
+  detect:
+    # `multicz changed` figures out which components had files modified
+    # in the diff window (PR base..HEAD or push before..after) so we
+    # only run the matching stack jobs.
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.changed.outputs.list }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install multicz
+        run: uv tool install multicz
+
+      - name: List changed components
+        id: changed
+        run: |
+          # PR: compare to the base branch.
+          # push: compare to the SHA before the push.
+          # First push (no parent): fall back to the planner window.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            REF="origin/${{ github.base_ref }}"
+          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            REF="${{ github.event.before }}"
+          else
+            REF=""
+          fi
+
+          if [ -n "$REF" ]; then
+            multicz changed --since "$REF" --output json | tee /tmp/changed.json
+          else
+            multicz changed --output json | tee /tmp/changed.json
+          fi
+
+          LIST=$(jq -c '.changed' /tmp/changed.json)
+          echo "list=$LIST" >> "$GITHUB_OUTPUT"
+          {
+            echo "## detect"
+            echo
+            if [ "$LIST" = "[]" ]; then
+              echo "_No components changed in this window — stack jobs will be skipped._"
+            else
+              echo "Changed components: \`$LIST\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   python:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -137,6 +190,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   js:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
     runs-on: ubuntu-latest
     defaults:
       run:
