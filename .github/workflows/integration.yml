@@ -64,10 +64,27 @@ jobs:
           multicz bump --output json | tee /tmp/bump.json
           API=$(jq -r       '.bumps.api.next_version          // empty' /tmp/bump.json)
           WEB=$(jq -r       '.bumps.web.next_version          // empty' /tmp/bump.json)
+          CHART_API=$(jq -r '.bumps["chart-api"].next_version // empty' /tmp/bump.json)
+          CHART_WEB=$(jq -r '.bumps["chart-web"].next_version // empty' /tmp/bump.json)
           CHART=$(jq -r     '.bumps.chart.next_version        // empty' /tmp/bump.json)
-          echo "api_version=$API"     >> "$GITHUB_OUTPUT"
-          echo "web_version=$WEB"     >> "$GITHUB_OUTPUT"
-          echo "chart_version=$CHART" >> "$GITHUB_OUTPUT"
+          echo "api_version=$API"             >> "$GITHUB_OUTPUT"
+          echo "web_version=$WEB"             >> "$GITHUB_OUTPUT"
+          echo "chart_api_version=$CHART_API" >> "$GITHUB_OUTPUT"
+          echo "chart_web_version=$CHART_WEB" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$CHART"         >> "$GITHUB_OUTPUT"
+          {
+            echo "## integration"
+            echo
+            echo "### Planned versions"
+            echo
+            echo "| component | next |"
+            echo "|---|---|"
+            [ -n "$API"       ] && echo "| api       | \`$API\` |"
+            [ -n "$WEB"       ] && echo "| web       | \`$WEB\` |"
+            [ -n "$CHART_API" ] && echo "| chart-api | \`$CHART_API\` |"
+            [ -n "$CHART_WEB" ] && echo "| chart-web | \`$CHART_WEB\` |"
+            [ -n "$CHART"     ] && echo "| chart     | \`$CHART\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Compute lowercase owner
         if: steps.plan.outputs.release == 'true'
@@ -157,22 +174,40 @@ jobs:
             sleep 1
           done
 
+          {
+            echo
+            echo "### Smoke test"
+            echo
+            echo "| endpoint | expected | got | status |"
+            echo "|---|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          FAIL=0
+
           if [ -n "$API_EXPECTED" ]; then
             GOT=$(curl -fsS http://localhost:8000/version | jq -r .version)
-            if [ "$GOT" != "$API_EXPECTED" ]; then
+            if [ "$GOT" = "$API_EXPECTED" ]; then
+              echo "| api \`/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✓ |" >> "$GITHUB_STEP_SUMMARY"
+              echo "✓ api /version = $GOT"
+            else
+              echo "| api \`/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✗ |" >> "$GITHUB_STEP_SUMMARY"
               echo "::error::api /version returned '$GOT', expected '$API_EXPECTED'"
               kubectl logs -l app.kubernetes.io/component=api --tail=50 || true
-              exit 1
+              FAIL=1
             fi
-            echo "✓ api /version = $GOT"
           fi
 
           if [ -n "$WEB_EXPECTED" ]; then
             GOT=$(curl -fsS http://localhost:8080/version.json | jq -r .version)
-            if [ "$GOT" != "$WEB_EXPECTED" ]; then
+            if [ "$GOT" = "$WEB_EXPECTED" ]; then
+              echo "| web \`/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✓ |" >> "$GITHUB_STEP_SUMMARY"
+              echo "✓ web /version.json = $GOT"
+            else
+              echo "| web \`/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✗ |" >> "$GITHUB_STEP_SUMMARY"
               echo "::error::web /version.json returned '$GOT', expected '$WEB_EXPECTED'"
               kubectl logs -l app.kubernetes.io/component=web --tail=50 || true
-              exit 1
+              FAIL=1
             fi
-            echo "✓ web /version.json = $GOT"
           fi
+
+          [ "$FAIL" = "0" ]

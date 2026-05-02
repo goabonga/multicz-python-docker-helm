@@ -103,6 +103,7 @@ jobs:
         if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
 
       - name: Build and push api image
+        id: push_api
         if: steps.bump.outputs.api_version != ''
         uses: docker/build-push-action@v6
         with:
@@ -115,6 +116,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build and push web image
+        id: push_web
         if: steps.bump.outputs.web_version != ''
         uses: docker/build-push-action@v6
         with:
@@ -125,6 +127,24 @@ jobs:
             ghcr.io/${{ steps.owner.outputs.value }}/web:latest
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
+
+      - name: Summarise pushed images
+        if: steps.push_api.outcome == 'success' || steps.push_web.outcome == 'success'
+        run: |
+          {
+            echo "## release"
+            echo
+            echo "### Pushed docker images"
+            echo
+            echo "| image | tag | digest |"
+            echo "|---|---|---|"
+            if [ -n "${{ steps.push_api.outputs.digest }}" ]; then
+              echo "| ghcr.io/${{ steps.owner.outputs.value }}/myapp | \`${{ steps.bump.outputs.api_version }}\` + \`latest\` | \`${{ steps.push_api.outputs.digest }}\` |"
+            fi
+            if [ -n "${{ steps.push_web.outputs.digest }}" ]; then
+              echo "| ghcr.io/${{ steps.owner.outputs.value }}/web | \`${{ steps.bump.outputs.web_version }}\` + \`latest\` | \`${{ steps.push_web.outputs.digest }}\` |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: azure/setup-helm@v4
         if: >-
@@ -154,7 +174,10 @@ jobs:
           helm package charts/myapp-api --destination /tmp
           VER=$(awk '/^version:/{print $2; exit}' charts/myapp-api/Chart.yaml)
           helm push "/tmp/myapp-api-${VER}.tgz" \
-            "oci://ghcr.io/${{ steps.owner.outputs.value }}/charts"
+            "oci://ghcr.io/${{ steps.owner.outputs.value }}/charts" 2>&1 | tee /tmp/push-api.out
+          DIGEST=$(awk '/^Digest:/{print $2}' /tmp/push-api.out)
+          echo "PUSH_API_VERSION=$VER"   >> "$GITHUB_ENV"
+          echo "PUSH_API_DIGEST=$DIGEST" >> "$GITHUB_ENV"
 
       - name: Package and push myapp-web subchart
         if: >-
@@ -164,7 +187,10 @@ jobs:
           helm package charts/myapp-web --destination /tmp
           VER=$(awk '/^version:/{print $2; exit}' charts/myapp-web/Chart.yaml)
           helm push "/tmp/myapp-web-${VER}.tgz" \
-            "oci://ghcr.io/${{ steps.owner.outputs.value }}/charts"
+            "oci://ghcr.io/${{ steps.owner.outputs.value }}/charts" 2>&1 | tee /tmp/push-web.out
+          DIGEST=$(awk '/^Digest:/{print $2}' /tmp/push-web.out)
+          echo "PUSH_WEB_VERSION=$VER"   >> "$GITHUB_ENV"
+          echo "PUSH_WEB_DIGEST=$DIGEST" >> "$GITHUB_ENV"
 
       - name: Package and push umbrella myapp chart
         if: steps.bump.outputs.chart_version != ''
@@ -176,14 +202,45 @@ jobs:
           helm dependency update charts/myapp
           helm package charts/myapp --destination /tmp
           helm push /tmp/myapp-${{ steps.bump.outputs.chart_version }}.tgz \
-            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
+            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts 2>&1 | tee /tmp/push-umbrella.out
+          DIGEST=$(awk '/^Digest:/{print $2}' /tmp/push-umbrella.out)
+          echo "PUSH_UMBRELLA_DIGEST=$DIGEST" >> "$GITHUB_ENV"
+
+      - name: Summarise pushed charts
+        if: >-
+          steps.bump.outputs.chart_api_version != '' ||
+          steps.bump.outputs.chart_web_version != '' ||
+          steps.bump.outputs.chart_version     != ''
+        run: |
+          {
+            echo
+            echo "### Pushed helm charts"
+            echo
+            echo "| chart | version | digest |"
+            echo "|---|---|---|"
+            if [ -n "${PUSH_API_VERSION:-}" ]; then
+              echo "| myapp-api | \`${PUSH_API_VERSION}\` | \`${PUSH_API_DIGEST}\` |"
+            fi
+            if [ -n "${PUSH_WEB_VERSION:-}" ]; then
+              echo "| myapp-web | \`${PUSH_WEB_VERSION}\` | \`${PUSH_WEB_DIGEST}\` |"
+            fi
+            if [ -n "${PUSH_UMBRELLA_DIGEST:-}" ]; then
+              echo "| myapp | \`${{ steps.bump.outputs.chart_version }}\` | \`${PUSH_UMBRELLA_DIGEST}\` |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create GitHub Releases
         if: steps.plan.outputs.release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          {
+            echo
+            echo "### GitHub Releases"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
           for tag in $(git tag --points-at HEAD); do
-            multicz release-notes --tag "$tag" \
-              | gh release create "$tag" --title "$tag" --notes-file -
+            URL=$(multicz release-notes --tag "$tag" \
+              | gh release create "$tag" --title "$tag" --notes-file -)
+            echo "- [\`$tag\`]($URL)" >> "$GITHUB_STEP_SUMMARY"
           done

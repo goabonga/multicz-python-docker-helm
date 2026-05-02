@@ -25,16 +25,36 @@ jobs:
         run: uv sync --frozen
 
       - name: Run pytest
-        run: uv run pytest -q
+        run: |
+          uv run pytest -q | tee /tmp/pytest.out
+          {
+            echo "## test (Python ${{ matrix.python }})"
+            echo
+            echo "**pytest**"
+            echo
+            echo '```'
+            tail -n 5 /tmp/pytest.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Lint
-        run: uv run ruff check src tests
+        run: |
+          uv run ruff check src tests
+          echo "**ruff**: \`All checks passed!\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install multicz
         run: uv tool install multicz
 
       - name: Validate multicz.toml
-        run: multicz validate --strict
+        run: |
+          multicz validate --strict | tee /tmp/validate.out
+          {
+            echo "**multicz validate**"
+            echo
+            echo '```'
+            cat /tmp/validate.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   helm:
     runs-on: ubuntu-latest
@@ -47,8 +67,17 @@ jobs:
 
       - name: Helm lint subcharts
         run: |
-          helm lint charts/myapp-api
-          helm lint charts/myapp-web
+          {
+            echo "## helm"
+            echo
+            echo "### Subcharts"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+          for c in charts/myapp-api charts/myapp-web; do
+            helm lint "$c" | tee "/tmp/lint-$(basename $c).out"
+            echo "- \`$c\`: $(tail -n 1 /tmp/lint-$(basename $c).out)" \
+              >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - name: Helm registry login (ghcr.io)
         run: |
@@ -61,11 +90,28 @@ jobs:
         # `helm dependency update` can't resolve oci://.../myapp-{api,web}.
         # The release job will publish them in dependency order, after
         # which subsequent CI runs render fully.
+        id: umbrella
         continue-on-error: true
         run: |
           helm dependency update charts/myapp
           helm lint charts/myapp
-          helm template charts/myapp >/dev/null
+          RESOURCES=$(helm template charts/myapp | grep -cE '^kind:')
+          {
+            echo
+            echo "### Umbrella"
+            echo
+            echo "- \`charts/myapp\`: lint OK, ${RESOURCES} k8s resources rendered"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Note umbrella bootstrap skip
+        if: steps.umbrella.outcome == 'failure'
+        run: |
+          {
+            echo
+            echo "### Umbrella"
+            echo
+            echo "- \`charts/myapp\`: skipped (subcharts not yet on ghcr.io — bootstrap window)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   web:
     runs-on: ubuntu-latest
@@ -85,10 +131,29 @@ jobs:
         run: npm ci
 
       - name: Test
-        run: npm test
+        run: |
+          npm test 2>&1 | tee /tmp/vitest.out
+          {
+            echo "## web"
+            echo
+            echo "**vitest**"
+            echo
+            echo '```'
+            grep -E 'Test Files|Tests|Duration' /tmp/vitest.out || tail -n 5 /tmp/vitest.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build
-        run: npm run build
+        run: |
+          npm run build 2>&1 | tee /tmp/vite.out
+          {
+            echo
+            echo "**vite build**"
+            echo
+            echo '```'
+            grep -E 'dist/|wrote dist/version.json' /tmp/vite.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   docker:
     runs-on: ubuntu-latest
@@ -105,6 +170,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build ${{ matrix.tag }} (no push)
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
@@ -112,3 +178,13 @@ jobs:
           tags: ${{ matrix.tag }}
           cache-from: type=gha,scope=${{ matrix.tag }}
           cache-to: type=gha,mode=max,scope=${{ matrix.tag }}
+
+      - name: Summary
+        run: |
+          {
+            echo "## docker (${{ matrix.tag }})"
+            echo
+            echo "- context: \`${{ matrix.context }}\`"
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- imageid: \`${{ steps.build.outputs.imageid }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
