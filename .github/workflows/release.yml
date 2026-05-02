@@ -70,12 +70,16 @@ jobs:
         run: |
           multicz bump --commit --tag --push \
             --summary "$GITHUB_STEP_SUMMARY" --output json | tee /tmp/release.json
-          API=$(jq -r   '.bumps.api.next_version   // empty' /tmp/release.json)
-          CHART=$(jq -r '.bumps.chart.next_version // empty' /tmp/release.json)
-          WEB=$(jq -r   '.bumps.web.next_version   // empty' /tmp/release.json)
-          echo "api_version=$API"     >> "$GITHUB_OUTPUT"
-          echo "chart_version=$CHART" >> "$GITHUB_OUTPUT"
-          echo "web_version=$WEB"     >> "$GITHUB_OUTPUT"
+          API=$(jq -r       '.bumps.api.next_version          // empty' /tmp/release.json)
+          WEB=$(jq -r       '.bumps.web.next_version          // empty' /tmp/release.json)
+          CHART_API=$(jq -r '.bumps["chart-api"].next_version // empty' /tmp/release.json)
+          CHART_WEB=$(jq -r '.bumps["chart-web"].next_version // empty' /tmp/release.json)
+          CHART=$(jq -r     '.bumps.chart.next_version        // empty' /tmp/release.json)
+          echo "api_version=$API"             >> "$GITHUB_OUTPUT"
+          echo "web_version=$WEB"             >> "$GITHUB_OUTPUT"
+          echo "chart_api_version=$CHART_API" >> "$GITHUB_OUTPUT"
+          echo "chart_web_version=$CHART_WEB" >> "$GITHUB_OUTPUT"
+          echo "chart_version=$CHART"         >> "$GITHUB_OUTPUT"
 
       # ghcr.io owners must be lowercase; GitHub usernames usually are
       # already, but normalise anyway so forks under mixed-case org
@@ -125,18 +129,43 @@ jobs:
           cache-to: type=gha,mode=max,scope=web
 
       - uses: azure/setup-helm@v4
-        if: steps.bump.outputs.chart_version != ''
+        if: >-
+          steps.bump.outputs.chart_api_version != '' ||
+          steps.bump.outputs.chart_web_version != '' ||
+          steps.bump.outputs.chart_version     != ''
 
-      - name: Package and push Helm chart
-        if: steps.bump.outputs.chart_version != ''
+      - name: Helm registry login
+        if: >-
+          steps.bump.outputs.chart_api_version != '' ||
+          steps.bump.outputs.chart_web_version != '' ||
+          steps.bump.outputs.chart_version     != ''
         run: |
-          # Resolve the file:// subchart deps into charts/myapp/charts/
-          # before packaging — otherwise helm package emits a chart with
-          # an empty subchart bundle and helm install errors at runtime.
-          helm dependency update charts/myapp
-          helm package charts/myapp --destination /tmp
           echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
             -u '${{ github.actor }}' --password-stdin
+
+      - name: Package and push myapp-api subchart
+        if: steps.bump.outputs.chart_api_version != ''
+        run: |
+          helm package charts/myapp-api --destination /tmp
+          helm push /tmp/myapp-api-${{ steps.bump.outputs.chart_api_version }}.tgz \
+            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
+
+      - name: Package and push myapp-web subchart
+        if: steps.bump.outputs.chart_web_version != ''
+        run: |
+          helm package charts/myapp-web --destination /tmp
+          helm push /tmp/myapp-web-${{ steps.bump.outputs.chart_web_version }}.tgz \
+            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
+
+      - name: Package and push umbrella myapp chart
+        if: steps.bump.outputs.chart_version != ''
+        run: |
+          # Resolve the OCI subchart deps from ghcr (the two `helm push`
+          # steps above just put them there). `helm dependency update`
+          # populates charts/myapp/charts/myapp-{api,web}-X.Y.Z.tgz so
+          # `helm install myapp` ships the bundled subcharts.
+          helm dependency update charts/myapp
+          helm package charts/myapp --destination /tmp
           helm push /tmp/myapp-${{ steps.bump.outputs.chart_version }}.tgz \
             oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
 

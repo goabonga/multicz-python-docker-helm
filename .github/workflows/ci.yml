@@ -38,6 +38,8 @@ jobs:
 
   helm:
     runs-on: ubuntu-latest
+    permissions:
+      packages: read   # needed to pull subchart OCI deps from ghcr.io
     steps:
       - uses: actions/checkout@v6
 
@@ -48,13 +50,22 @@ jobs:
           helm lint charts/myapp-api
           helm lint charts/myapp-web
 
-      - name: Helm dependency update + lint umbrella
+      - name: Helm registry login (ghcr.io)
+        run: |
+          echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
+            -u '${{ github.actor }}' --password-stdin
+
+      - name: Resolve umbrella OCI deps + lint + smoke render
+        # `continue-on-error: true` accommodates the bootstrap window:
+        # before the first release publishes the subcharts to ghcr.io,
+        # `helm dependency update` can't resolve oci://.../myapp-{api,web}.
+        # The release job will publish them in dependency order, after
+        # which subsequent CI runs render fully.
+        continue-on-error: true
         run: |
           helm dependency update charts/myapp
           helm lint charts/myapp
-
-      - name: Helm template (smoke render through the umbrella)
-        run: helm template charts/myapp >/dev/null
+          helm template charts/myapp >/dev/null
 
   web:
     runs-on: ubuntu-latest

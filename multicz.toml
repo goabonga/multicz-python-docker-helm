@@ -50,12 +50,20 @@ bump_files = [{ file = "charts/myapp-api/Chart.yaml", key = "version" }]
 mirrors    = [{ file = "charts/myapp/Chart.yaml", key = 'regex:- name: myapp-api\s+version:\s+(\S+)' }]
 changelog  = "charts/myapp-api/CHANGELOG.md"
 
+[[components.chart-api.artifacts]]
+type = "helm"
+ref  = "myapp-api-{version}.tgz"
+
 # chart-web: web subchart. Same shape as chart-api.
 [components.chart-web]
 paths      = ["charts/myapp-web/**"]
 bump_files = [{ file = "charts/myapp-web/Chart.yaml", key = "version" }]
 mirrors    = [{ file = "charts/myapp/Chart.yaml", key = 'regex:- name: myapp-web\s+version:\s+(\S+)' }]
 changelog  = "charts/myapp-web/CHANGELOG.md"
+
+[[components.chart-web.artifacts]]
+type = "helm"
+ref  = "myapp-web-{version}.tgz"
 
 # chart: umbrella `myapp` chart. Bumps directly when its own
 # Chart.yaml or values.yaml changes (including the dependency-block

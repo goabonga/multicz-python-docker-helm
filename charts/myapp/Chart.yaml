@@ -6,7 +6,7 @@ version: 0.1.2
 dependencies:
   - name: myapp-api
     version: 0.0.0
-    repository: file://../myapp-api
+    repository: oci://ghcr.io/goabonga/charts
   - name: myapp-web
     version: 0.0.0
-    repository: file://../myapp-web
+    repository: oci://ghcr.io/goabonga/charts
