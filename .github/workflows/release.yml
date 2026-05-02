@@ -130,6 +130,10 @@ jobs:
       - name: Package and push Helm chart
         if: steps.bump.outputs.chart_version != ''
         run: |
+          # Resolve the file:// subchart deps into charts/myapp/charts/
+          # before packaging — otherwise helm package emits a chart with
+          # an empty subchart bundle and helm install errors at runtime.
+          helm dependency update charts/myapp
           helm package charts/myapp --destination /tmp
           echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
             -u '${{ github.actor }}' --password-stdin

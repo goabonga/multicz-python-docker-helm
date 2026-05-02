@@ -3,11 +3,9 @@ commit_convention = "conventional"
 tag_format = "{component}-v{version}"
 initial_version = "0.0.0"
 
-# api: the FastAPI application. The image tag mirrors `version`, and
-# the chart's `appVersion` mirrors it too — so a feature commit on the
-# Python source bumps `api`, retags the docker image, and (via the
-# mirror cascade) patch-bumps the chart so its packaged artifact pins
-# the new appVersion immutably.
+# api: FastAPI app. Mirrors its version into the api subchart's
+# appVersion (so `helm package` pins the image), which then cascades
+# patch-bumps onto chart-api.
 [components.api]
 paths      = ["src/**", "pyproject.toml", "tests/**", "/Dockerfile"]
 bump_files = [
@@ -17,7 +15,7 @@ bump_files = [
     # surrounding code (docstrings, imports, …) is preserved as-is.
     { file = "src/api/__init__.py", key = 'regex:^__version__\s*=\s*"([^"]+)"' },
 ]
-mirrors    = [{ file = "charts/myapp/Chart.yaml", key = "appVersion" }]
+mirrors    = [{ file = "charts/myapp-api/Chart.yaml", key = "appVersion" }]
 changelog  = "CHANGELOG.md"
 post_bump  = ["uv lock"]
 
@@ -25,9 +23,46 @@ post_bump  = ["uv lock"]
 type = "docker"
 ref  = "ghcr.io/example/myapp:{version}"
 
-# chart: the Helm chart. Bumps directly when chart templates change,
-# and patch-bumps automatically when api's appVersion mirror lands
-# (mirror cascade — keeps `myapp-X.Y.Z.tgz` immutable).
+# web: vanilla TypeScript frontend (Vite), shipped as nginx Docker
+# image. Mirrors its version into the web subchart's appVersion (same
+# pattern as api).
+[components.web]
+paths      = ["web/**"]
+bump_files = [
+    { file = "web/package.json", key = "version" },
+    { file = "web/src/version.ts", key = 'regex:export const VERSION\s*=\s*"([^"]+)"' },
+]
+mirrors    = [{ file = "charts/myapp-web/Chart.yaml", key = "appVersion" }]
+changelog  = "web/CHANGELOG.md"
+post_bump  = ["npm --prefix web install --package-lock-only"]
+
+[[components.web.artifacts]]
+type = "docker"
+ref  = "ghcr.io/example/web:{version}"
+
+# chart-api: api subchart. Bumps directly when its templates change,
+# patch-bumps via cascade when api's appVersion mirror lands. Also
+# forwards its version into the parent's `dependencies[name=myapp-api]`
+# block — that mirror in turn cascades onto chart.
+[components.chart-api]
+paths      = ["charts/myapp-api/**"]
+bump_files = [{ file = "charts/myapp-api/Chart.yaml", key = "version" }]
+mirrors    = [{ file = "charts/myapp/Chart.yaml", key = 'regex:- name: myapp-api\s+version:\s+(\S+)' }]
+changelog  = "charts/myapp-api/CHANGELOG.md"
+
+# chart-web: web subchart. Same shape as chart-api.
+[components.chart-web]
+paths      = ["charts/myapp-web/**"]
+bump_files = [{ file = "charts/myapp-web/Chart.yaml", key = "version" }]
+mirrors    = [{ file = "charts/myapp/Chart.yaml", key = 'regex:- name: myapp-web\s+version:\s+(\S+)' }]
+changelog  = "charts/myapp-web/CHANGELOG.md"
+
+# chart: umbrella `myapp` chart. Bumps directly when its own
+# Chart.yaml or values.yaml changes (including the dependency-block
+# rewrites done by chart-api/chart-web mirrors), so any subchart bump
+# produces a corresponding parent patch and a fresh `myapp-X.Y.Z.tgz`.
+# Kept as `[components.chart]` for tag continuity (existing `chart-vX`
+# tags now point at the umbrella).
 [components.chart]
 paths      = ["charts/myapp/**"]
 bump_files = [{ file = "charts/myapp/Chart.yaml", key = "version" }]
@@ -36,21 +71,3 @@ changelog  = "charts/myapp/CHANGELOG.md"
 [[components.chart.artifacts]]
 type = "helm"
 ref  = "myapp-{version}.tgz"
-
-# web: vanilla TypeScript frontend (Vite), shipped as an nginx-based
-# Docker image. Independent of api/chart — own version, own changelog.
-# Both `package.json:version` and `src/version.ts:VERSION` stay in sync,
-# the second via the regex escape hatch (TS isn't a structured-config
-# format multicz parses).
-[components.web]
-paths      = ["web/**"]
-bump_files = [
-    { file = "web/package.json", key = "version" },
-    { file = "web/src/version.ts", key = 'regex:export const VERSION\s*=\s*"([^"]+)"' },
-]
-changelog  = "web/CHANGELOG.md"
-post_bump  = ["npm --prefix web install --package-lock-only"]
-
-[[components.web.artifacts]]
-type = "docker"
-ref  = "ghcr.io/example/web:{version}"

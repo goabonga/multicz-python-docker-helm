@@ -1,6 +1,12 @@
 apiVersion: v2
 name: myapp
-description: Demo Helm chart for multicz (FastAPI deployment)
+description: Umbrella chart bundling the api and web subcharts
 type: application
 version: 0.1.2
-appVersion: 0.2.0
+dependencies:
+  - name: myapp-api
+    version: 0.0.0
+    repository: file://../myapp-api
+  - name: myapp-web
+    version: 0.0.0
+    repository: file://../myapp-web

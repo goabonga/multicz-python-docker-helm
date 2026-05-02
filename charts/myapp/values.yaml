@@ -1,27 +1,13 @@
-replicaCount: 1
+# Umbrella values: each subchart's values are namespaced under its
+# chart name. Override anything from charts/myapp-{api,web}/values.yaml
+# here.
 
-image:
-  repository: ghcr.io/example/myapp
-  pullPolicy: IfNotPresent
-  # Defaults to .Chart.AppVersion when empty.
-  tag: ""
+myapp-api:
+  replicaCount: 1
+  service:
+    port: 8000
 
-service:
-  type: ClusterIP
-  port: 8000
-
-ingress:
-  enabled: false
-  className: ""
-  annotations: {}
-  hosts:
-    - host: myapp.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
-
-resources: {}
-nodeSelector: {}
-tolerations: []
-affinity: {}
+myapp-web:
+  replicaCount: 1
+  service:
+    port: 80
