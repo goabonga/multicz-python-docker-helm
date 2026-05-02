@@ -123,6 +123,8 @@ jobs:
       # ----- build (vite bundle, then docker image) -----
 
       - name: Vite build
+        env:
+          NO_COLOR: "1"
         run: |
           npm run build 2>&1 | tee /tmp/vite.out
           {
