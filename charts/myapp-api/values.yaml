@@ -21,7 +21,13 @@ ingress:
           pathType: Prefix
   tls: []
 
-resources: {}
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
 nodeSelector: {}
 tolerations: []
 affinity: {}
