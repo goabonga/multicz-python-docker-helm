@@ -177,15 +177,16 @@ jobs:
       - name: Helm install umbrella in kind
         if: steps.bump.outputs.chart_version != ''
         run: |
+          # `--wait` blocks until every resource (deployments, pods,
+          # services) reaches ready state. `kubectl wait` directly on
+          # pods races the controller — pods aren't created the
+          # moment helm install returns.
           helm install demo charts/myapp \
+            --wait --timeout 120s \
             --set "myapp-api.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/myapp" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
             --set "myapp-web.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/web" \
             --set "myapp-web.image.pullPolicy=IfNotPresent"
-          kubectl wait --for=condition=ready pod \
-            -l app.kubernetes.io/component=api --timeout=90s
-          kubectl wait --for=condition=ready pod \
-            -l app.kubernetes.io/component=web --timeout=90s
 
       - name: Smoke test endpoints via port-forward
         if: steps.bump.outputs.chart_version != ''
