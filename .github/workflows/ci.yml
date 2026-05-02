@@ -302,3 +302,76 @@ jobs:
             echo "- digest: \`${{ steps.build_web.outputs.digest }}\`"
             echo "- imageid: \`${{ steps.build_web.outputs.imageid }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------- helm charts
+
+  chart-api-check:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'chart-api')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v5
+      - name: Helm lint
+        run: |
+          helm lint charts/myapp-api | tee /tmp/lint-api.out
+          {
+            echo "## chart-api-check"
+            echo
+            echo "**helm lint** \`charts/myapp-api\`"
+            echo
+            echo '```'
+            cat /tmp/lint-api.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  chart-web-check:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'chart-web')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v5
+      - name: Helm lint
+        run: |
+          helm lint charts/myapp-web | tee /tmp/lint-web.out
+          {
+            echo "## chart-web-check"
+            echo
+            echo "**helm lint** \`charts/myapp-web\`"
+            echo
+            echo '```'
+            cat /tmp/lint-web.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  chart-check:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'chart')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v5
+      - name: Bundle subcharts (umbrella's deps)
+        # `helm lint` on the umbrella complains about unresolved
+        # dependencies if charts/myapp/charts/ is empty — package the
+        # local subcharts at their HEAD version so the lint sees them.
+        run: |
+          mkdir -p charts/myapp/charts
+          helm package charts/myapp-api -d charts/myapp/charts
+          helm package charts/myapp-web -d charts/myapp/charts
+      - name: Helm lint umbrella + smoke render
+        run: |
+          helm lint charts/myapp | tee /tmp/lint-umbrella.out
+          RESOURCES=$(helm template charts/myapp | grep -cE '^kind:')
+          {
+            echo "## chart-check"
+            echo
+            echo "**helm lint** \`charts/myapp\` (umbrella)"
+            echo
+            echo '```'
+            cat /tmp/lint-umbrella.out
+            echo '```'
+            echo
+            echo "**helm template**: ${RESOURCES} k8s resources rendered"
+          } >> "$GITHUB_STEP_SUMMARY"
