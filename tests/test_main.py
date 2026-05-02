@@ -33,3 +33,12 @@ def test_info() -> None:
     for key in ("name", "version", "python", "platform"):
         assert key in body, f"missing {key} in {body}"
     assert body["name"] == "multicz-demo"
+
+
+def test_status() -> None:
+    response = client.get("/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["healthy"] is True
+    assert isinstance(body["uptime_s"], int) and body["uptime_s"] >= 0
+    assert "version" in body

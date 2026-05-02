@@ -1,10 +1,12 @@
 import platform
+import time
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
 
 app = FastAPI(title="multicz-demo")
+_started_at = time.monotonic()
 
 
 @lru_cache(maxsize=1)
@@ -37,4 +39,13 @@ def info() -> dict[str, str]:
         "version": _app_version(),
         "python": platform.python_version(),
         "platform": platform.platform(terse=True),
+    }
+
+
+@app.get("/status")
+def status() -> dict[str, str | bool | int]:
+    return {
+        "healthy": True,
+        "uptime_s": int(time.monotonic() - _started_at),
+        "version": _app_version(),
     }
