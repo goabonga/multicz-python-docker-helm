@@ -28,34 +28,34 @@ jobs:
       - name: List changed components
         id: changed
         run: |
-          # PR: compare to the base branch.
-          # push: compare to the SHA before the push.
-          # First push (no parent): fall back to the planner window.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            REF="origin/${{ github.base_ref }}"
-          elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            REF="${{ github.event.before }}"
-          else
-            REF=""
-          fi
-
-          if [ -n "$REF" ]; then
-            multicz changed --since "$REF" --output json | tee /tmp/changed.json
-          else
-            multicz changed --output json | tee /tmp/changed.json
-          fi
-
-          LIST=$(jq -c '.changed' /tmp/changed.json)
+          # TEMPORARY OVERRIDE: hardcode every component as changed so
+          # every downstream job runs (debugging the full pipeline).
+          # Restore the real `multicz changed` block below to revert.
+          LIST='["api","web","chart-api","chart-web","chart"]'
           echo "list=$LIST" >> "$GITHUB_OUTPUT"
           {
             echo "## detect"
             echo
-            if [ "$LIST" = "[]" ]; then
-              echo "_No components changed in this window — stack jobs will be skipped._"
-            else
-              echo "Changed components: \`$LIST\`"
-            fi
+            echo "**TEMPORARY OVERRIDE** — every component flagged as changed."
+            echo
+            echo "Changed components: \`$LIST\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # ---- real implementation (restore by removing the override above) ----
+          # if [ "${{ github.event_name }}" = "pull_request" ]; then
+          #   REF="origin/${{ github.base_ref }}"
+          # elif [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+          #   REF="${{ github.event.before }}"
+          # else
+          #   REF=""
+          # fi
+          # if [ -n "$REF" ]; then
+          #   multicz changed --since "$REF" --output json | tee /tmp/changed.json
+          # else
+          #   multicz changed --output json | tee /tmp/changed.json
+          # fi
+          # LIST=$(jq -c '.changed' /tmp/changed.json)
+          # echo "list=$LIST" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------- python stack
 
