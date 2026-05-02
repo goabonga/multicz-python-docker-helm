@@ -59,7 +59,7 @@ jobs:
 
   # ---------------------------------------------------------- python stack
 
-  python-check:
+  python-lint:
     needs: detect
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
@@ -75,13 +75,13 @@ jobs:
       - name: Install
         run: uv sync --frozen
 
-      - name: Ruff
+      - name: Ruff lint
         run: |
           uv run ruff check src tests
           {
-            echo "## python-check"
+            echo "## python-lint"
             echo
-            echo "**ruff**: \`All checks passed!\`"
+            echo "**ruff check**: \`clean\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install multicz
@@ -96,6 +96,60 @@ jobs:
             echo
             echo '```'
             cat /tmp/validate.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python-format:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Ruff format check
+        run: |
+          uv run ruff format --check src tests | tee /tmp/format.out
+          {
+            echo "## python-format"
+            echo
+            echo "**ruff format --check**"
+            echo
+            echo '```'
+            cat /tmp/format.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  python-typecheck:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --frozen
+
+      - name: Mypy (strict)
+        run: |
+          uv run mypy | tee /tmp/mypy.out
+          {
+            echo "## python-typecheck"
+            echo
+            echo "**mypy --strict**"
+            echo
+            echo '```'
+            cat /tmp/mypy.out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -184,7 +238,7 @@ jobs:
           PY
 
   python-audit:
-    needs: [detect, python-check, python-test]
+    needs: [detect, python-lint, python-format, python-typecheck, python-test]
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
@@ -223,7 +277,7 @@ jobs:
           exit "$RC"
 
   python-bandit:
-    needs: [detect, python-check, python-test]
+    needs: [detect, python-lint, python-format, python-typecheck, python-test]
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
@@ -287,7 +341,75 @@ jobs:
 
   # -------------------------------------------------------------- js stack
 
-  js-check:
+  js-lint:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Biome lint
+        env:
+          NO_COLOR: "1"
+        run: |
+          npx biome lint . | tee /tmp/lint.out
+          {
+            echo "## js-lint"
+            echo
+            echo "**biome lint**"
+            echo
+            echo '```'
+            cat /tmp/lint.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  js-format:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Biome format check
+        env:
+          NO_COLOR: "1"
+        run: |
+          npx biome format . | tee /tmp/format.out
+          {
+            echo "## js-format"
+            echo
+            echo "**biome format** (check-only)"
+            echo
+            echo '```'
+            cat /tmp/format.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  js-typecheck:
     needs: detect
     if: contains(fromJson(needs.detect.outputs.changed), 'web')
     runs-on: ubuntu-latest
@@ -310,9 +432,9 @@ jobs:
         run: |
           npx tsc --noEmit
           {
-            echo "## js-check"
+            echo "## js-typecheck"
             echo
-            echo "**tsc**: \`type-check passed\`"
+            echo "**tsc --noEmit**: \`clean\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   js-test:
@@ -348,7 +470,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   js-container:
-    needs: [js-check, js-test]
+    needs: [js-lint, js-format, js-typecheck, js-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
