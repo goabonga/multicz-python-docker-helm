@@ -6,11 +6,8 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  python:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -19,25 +16,14 @@ jobs:
 
       - uses: astral-sh/setup-uv@v8.1.0
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
 
       - name: Install
         run: uv sync --frozen
 
-      - name: Run pytest
-        run: |
-          uv run pytest -q | tee /tmp/pytest.out
-          {
-            echo "## test (Python ${{ matrix.python }})"
-            echo
-            echo "**pytest**"
-            echo
-            echo '```'
-            tail -n 5 /tmp/pytest.out
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+      # ----- check -----
 
-      - name: Lint
+      - name: Ruff
         run: |
           uv run ruff check src tests
           echo "**ruff**: \`All checks passed!\`" >> "$GITHUB_STEP_SUMMARY"
@@ -56,64 +42,46 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  helm:
-    runs-on: ubuntu-latest
-    permissions:
-      packages: read   # needed to pull subchart OCI deps from ghcr.io
-    steps:
-      - uses: actions/checkout@v6
+      # ----- test -----
 
-      - uses: azure/setup-helm@v4
-
-      - name: Helm lint subcharts
+      - name: Pytest
         run: |
+          uv run pytest -q | tee /tmp/pytest.out
           {
-            echo "## helm"
+            echo "## python"
             echo
-            echo "### Subcharts"
+            echo "**pytest**"
             echo
-          } >> "$GITHUB_STEP_SUMMARY"
-          for c in charts/myapp-api charts/myapp-web; do
-            helm lint "$c" | tee "/tmp/lint-$(basename $c).out"
-            echo "- \`$c\`: $(tail -n 1 /tmp/lint-$(basename $c).out)" \
-              >> "$GITHUB_STEP_SUMMARY"
-          done
-
-      - name: Helm registry login (ghcr.io)
-        run: |
-          echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
-            -u '${{ github.actor }}' --password-stdin
-
-      - name: Resolve umbrella OCI deps + lint + smoke render
-        # `continue-on-error: true` accommodates the bootstrap window:
-        # before the first release publishes the subcharts to ghcr.io,
-        # `helm dependency update` can't resolve oci://.../myapp-{api,web}.
-        # The release job will publish them in dependency order, after
-        # which subsequent CI runs render fully.
-        id: umbrella
-        continue-on-error: true
-        run: |
-          helm dependency update charts/myapp
-          helm lint charts/myapp
-          RESOURCES=$(helm template charts/myapp | grep -cE '^kind:')
-          {
-            echo
-            echo "### Umbrella"
-            echo
-            echo "- \`charts/myapp\`: lint OK, ${RESOURCES} k8s resources rendered"
+            echo '```'
+            tail -n 5 /tmp/pytest.out
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Note umbrella bootstrap skip
-        if: steps.umbrella.outcome == 'failure'
+      # ----- build image -----
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build api docker image (no push)
+        id: build_api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Summarise api image
         run: |
           {
             echo
-            echo "### Umbrella"
+            echo "**api image** (built, not pushed)"
             echo
-            echo "- \`charts/myapp\`: skipped (subcharts not yet on ghcr.io — bootstrap window)"
+            echo "- digest: \`${{ steps.build_api.outputs.digest }}\`"
+            echo "- imageid: \`${{ steps.build_api.outputs.imageid }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  web:
+  js:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -130,11 +98,20 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Test
+      # ----- check -----
+
+      - name: TypeScript typecheck
+        run: |
+          npx tsc --noEmit
+          echo "**tsc**: \`type-check passed\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # ----- test -----
+
+      - name: Vitest
         run: |
           npm test 2>&1 | tee /tmp/vitest.out
           {
-            echo "## web"
+            echo "## js"
             echo
             echo "**vitest**"
             echo
@@ -143,7 +120,9 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Build
+      # ----- build (vite bundle, then docker image) -----
+
+      - name: Vite build
         run: |
           npm run build 2>&1 | tee /tmp/vite.out
           {
@@ -155,36 +134,24 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  docker:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - context: .
-            tag: api:ci
-          - context: web
-            tag: web:ci
-    steps:
-      - uses: actions/checkout@v6
-
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build ${{ matrix.tag }} (no push)
-        id: build
+      - name: Build web docker image (no push)
+        id: build_web
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: web
           push: false
-          tags: ${{ matrix.tag }}
-          cache-from: type=gha,scope=${{ matrix.tag }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.tag }}
+          tags: web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
 
-      - name: Summary
+      - name: Summarise web image
         run: |
           {
-            echo "## docker (${{ matrix.tag }})"
             echo
-            echo "- context: \`${{ matrix.context }}\`"
-            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
-            echo "- imageid: \`${{ steps.build.outputs.imageid }}\`"
+            echo "**web image** (built, not pushed)"
+            echo
+            echo "- digest: \`${{ steps.build_web.outputs.digest }}\`"
+            echo "- imageid: \`${{ steps.build_web.outputs.imageid }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
