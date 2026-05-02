@@ -328,6 +328,15 @@ jobs:
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
+      - name: Save image as tarball for downstream scans
+        run: docker save api:ci -o /tmp/api.tar
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: api-image
+          path: /tmp/api.tar
+          retention-days: 1
+
       - name: Summarise api image
         run: |
           {
@@ -337,7 +346,78 @@ jobs:
             echo
             echo "- digest: \`${{ steps.build_api.outputs.digest }}\`"
             echo "- imageid: \`${{ steps.build_api.outputs.imageid }}\`"
+            echo "- tarball: \`/tmp/api.tar\` (uploaded as \`api-image\` artifact)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  python-sbom:
+    needs: python-container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: api-image
+          path: /tmp
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM (SPDX JSON)
+        run: |
+          syft docker-archive:/tmp/api.tar \
+            -o spdx-json=/tmp/api.sbom.spdx.json \
+            -o table > /tmp/sbom.txt
+          {
+            echo "## python-sbom"
+            echo
+            echo "**syft** \`docker-archive:/tmp/api.tar\` → \`spdx-json\`"
+            echo
+            echo '```'
+            head -n 50 /tmp/sbom.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: api-sbom
+          path: /tmp/api.sbom.spdx.json
+          retention-days: 30
+
+  python-grype:
+    needs: python-sbom
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: api-sbom
+          path: /tmp
+
+      - name: Install grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Scan SBOM (--fail-on high)
+        # `--fail-on high` means findings of severity high or critical
+        # exit non-zero. Medium/low/negligible are reported but don't
+        # block. Tighten to `medium` if you want stricter gating.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          grype sbom:/tmp/api.sbom.spdx.json --fail-on high \
+            --output table | tee /tmp/grype.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## python-grype"
+            echo
+            echo "**grype** \`sbom:api.sbom.spdx.json --fail-on high\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/grype.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
 
   # -------------------------------------------------------------- js stack
 
@@ -469,8 +549,46 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  js-audit:
+    needs: [detect, js-test]
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: npm audit
+        # Default --audit-level is `low`, which is too noisy for CI.
+        # Hard-fail only on high+critical via --audit-level=high.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          npm audit --audit-level=high | tee /tmp/audit.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## js-audit"
+            echo
+            echo "**npm audit** \`--audit-level=high\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/audit.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
   js-container:
-    needs: [js-test]
+    needs: [js-audit]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -487,6 +605,15 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
+      - name: Save image as tarball for downstream scans
+        run: docker save web:ci -o /tmp/web.tar
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-image
+          path: /tmp/web.tar
+          retention-days: 1
+
       - name: Summarise web image
         run: |
           {
@@ -496,7 +623,75 @@ jobs:
             echo
             echo "- digest: \`${{ steps.build_web.outputs.digest }}\`"
             echo "- imageid: \`${{ steps.build_web.outputs.imageid }}\`"
+            echo "- tarball: \`/tmp/web.tar\` (uploaded as \`web-image\` artifact)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  js-sbom:
+    needs: js-container
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-image
+          path: /tmp
+
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM (SPDX JSON)
+        run: |
+          syft docker-archive:/tmp/web.tar \
+            -o spdx-json=/tmp/web.sbom.spdx.json \
+            -o table > /tmp/sbom.txt
+          {
+            echo "## js-sbom"
+            echo
+            echo "**syft** \`docker-archive:/tmp/web.tar\` → \`spdx-json\`"
+            echo
+            echo '```'
+            head -n 50 /tmp/sbom.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-sbom
+          path: /tmp/web.sbom.spdx.json
+          retention-days: 30
+
+  js-grype:
+    needs: js-sbom
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-sbom
+          path: /tmp
+
+      - name: Install grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Scan SBOM (--fail-on high)
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          grype sbom:/tmp/web.sbom.spdx.json --fail-on high \
+            --output table | tee /tmp/grype.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## js-grype"
+            echo
+            echo "**grype** \`sbom:web.sbom.spdx.json --fail-on high\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/grype.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
 
   # ----------------------------------------------------------- helm charts
 
