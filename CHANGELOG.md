@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.4.0] - 2026-05-02
+
+### Features
+
+- cross-stack /status endpoint and live status panel (`d45e744`)
+
 ## [0.3.0] - 2026-05-02
 
 ### Features
