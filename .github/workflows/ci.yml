@@ -57,14 +57,15 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-  python:
+  # ---------------------------------------------------------- python stack
+
+  python-check:
     needs: detect
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          # multicz validate / plan need full history for tag detection.
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v8.1.0
@@ -74,12 +75,14 @@ jobs:
       - name: Install
         run: uv sync --frozen
 
-      # ----- check -----
-
       - name: Ruff
         run: |
           uv run ruff check src tests
-          echo "**ruff**: \`All checks passed!\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## python-check"
+            echo
+            echo "**ruff**: \`All checks passed!\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install multicz
         run: uv tool install multicz
@@ -88,6 +91,7 @@ jobs:
         run: |
           multicz validate --strict | tee /tmp/validate.out
           {
+            echo
             echo "**multicz validate**"
             echo
             echo '```'
@@ -95,7 +99,21 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ----- test -----
+  python-test:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: uv sync --frozen
 
       - name: Pytest
         run: |
@@ -111,7 +129,7 @@ jobs:
           import xml.etree.ElementTree as ET
 
           if not os.path.exists("/tmp/junit.xml"):
-              print("## python\n\n**pytest**: no junit output (collection aborted)")
+              print("## python-test\n\n**pytest**: no junit output (collection aborted)")
               sys.exit(0)
 
           tree = ET.parse("/tmp/junit.xml")
@@ -125,7 +143,7 @@ jobs:
           passed  = total - failed - errors - skipped
           time    = float(suite.get("time", 0))
 
-          print("## python")
+          print("## python-test")
           print()
           print(
               f"**pytest** — {passed} ✓  {failed} ✗  "
@@ -165,7 +183,11 @@ jobs:
                   print("</details>")
           PY
 
-      # ----- build image -----
+  python-container:
+    needs: [python-check, python-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
       - uses: docker/setup-buildx-action@v4
 
@@ -182,6 +204,7 @@ jobs:
       - name: Summarise api image
         run: |
           {
+            echo "## python-container"
             echo
             echo "**api image** (built, not pushed)"
             echo
@@ -189,7 +212,9 @@ jobs:
             echo "- imageid: \`${{ steps.build_api.outputs.imageid }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  js:
+  # -------------------------------------------------------------- js stack
+
+  js-check:
     needs: detect
     if: contains(fromJson(needs.detect.outputs.changed), 'web')
     runs-on: ubuntu-latest
@@ -208,20 +233,39 @@ jobs:
       - name: Install
         run: npm ci
 
-      # ----- check -----
-
       - name: TypeScript typecheck
         run: |
           npx tsc --noEmit
-          echo "**tsc**: \`type-check passed\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## js-check"
+            echo
+            echo "**tsc**: \`type-check passed\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # ----- test -----
+  js-test:
+    needs: detect
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
 
       - name: Vitest
         run: |
           npm test -- --no-color 2>&1 | tee /tmp/vitest.out
           {
-            echo "## js"
+            echo "## js-test"
             echo
             echo "**vitest**"
             echo
@@ -230,21 +274,11 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ----- build (vite bundle, then docker image) -----
-
-      - name: Vite build
-        env:
-          NO_COLOR: "1"
-        run: |
-          npm run build 2>&1 | tee /tmp/vite.out
-          {
-            echo
-            echo "**vite build**"
-            echo
-            echo '```'
-            grep -E 'dist/|wrote dist/version.json' /tmp/vite.out
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+  js-container:
+    needs: [js-check, js-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
       - uses: docker/setup-buildx-action@v4
 
@@ -261,6 +295,7 @@ jobs:
       - name: Summarise web image
         run: |
           {
+            echo "## js-container"
             echo
             echo "**web image** (built, not pushed)"
             echo
