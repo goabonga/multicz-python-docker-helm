@@ -2,11 +2,11 @@ apiVersion: v2
 name: myapp
 description: Umbrella chart bundling the api and web subcharts
 type: application
-version: 0.1.2
+version: 0.2.0
 dependencies:
   - name: myapp-api
     version: 0.0.0
     repository: oci://ghcr.io/goabonga/charts
   - name: myapp-web
-    version: 0.0.0
+    version: 0.0.1
     repository: oci://ghcr.io/goabonga/charts
