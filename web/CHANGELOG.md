@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.3.0] - 2026-05-02
+
+### Features
+
+- **web**: show live api version next to the embedded web version (`1bbc557`)
+
 ## [0.2.0] - 2026-05-02
 
 ### Features
