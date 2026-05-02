@@ -183,8 +183,81 @@ jobs:
                   print("</details>")
           PY
 
+  python-audit:
+    needs: [detect, python-check, python-test]
+    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: uv tool install pip-audit
+
+      - name: Audit resolved dependencies
+        # `uv export` materialises the locked, non-dev resolution as a
+        # fully-hashed requirements.txt; `--no-emit-project` skips
+        # the editable `-e .` line which lacks a hash. `--disable-pip`
+        # stops pip-audit from re-running its own pip resolution since
+        # uv.lock is already authoritative. Default exit code is
+        # non-zero on vulnerabilities, propagated via pipefail.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          uv export --no-dev --no-emit-project \
+            --format requirements-txt -o /tmp/requirements.txt
+          pip-audit -r /tmp/requirements.txt --disable-pip | tee /tmp/audit.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## python-audit"
+            echo
+            echo "**pip-audit** \`requirements (no-dev, hashed)\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/audit.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
+  python-bandit:
+    needs: [detect, python-check, python-test]
+    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install bandit
+        run: uv tool install bandit
+
+      - name: Bandit (AST-based source scan)
+        # Recursive scan of src/ only — tests/ are intentionally
+        # excluded (assert/subprocess patterns there are noise). Exit
+        # 1 on findings is propagated via pipefail.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          bandit -r src -f txt | tee /tmp/bandit.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## python-bandit"
+            echo
+            echo "**bandit** \`-r src\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/bandit.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
   python-container:
-    needs: [python-check, python-test]
+    needs: [python-audit, python-bandit]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
