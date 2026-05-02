@@ -24,3 +24,12 @@ def test_version() -> None:
     assert "version" in body
     # SemVer-ish or "unknown" if the package isn't installed yet.
     assert body["version"]
+
+
+def test_info() -> None:
+    response = client.get("/info")
+    assert response.status_code == 200
+    body = response.json()
+    for key in ("name", "version", "python", "platform"):
+        assert key in body, f"missing {key} in {body}"
+    assert body["name"] == "multicz-demo"

@@ -1,3 +1,4 @@
+import platform
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
@@ -27,3 +28,13 @@ def health() -> dict[str, str]:
 @app.get("/version")
 def get_version() -> dict[str, str]:
     return {"version": _app_version()}
+
+
+@app.get("/info")
+def info() -> dict[str, str]:
+    return {
+        "name": app.title,
+        "version": _app_version(),
+        "python": platform.python_version(),
+        "platform": platform.platform(terse=True),
+    }
