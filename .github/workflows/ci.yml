@@ -418,6 +418,6 @@ jobs:
             echo "**checkov** \`--framework helm --directory charts/\`"
             echo
             echo '```'
-            tail -n 60 /tmp/checkov.out
+            cat /tmp/checkov.out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
