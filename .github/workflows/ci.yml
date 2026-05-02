@@ -375,3 +375,49 @@ jobs:
             echo
             echo "**helm template**: ${RESOURCES} k8s resources rendered"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  helm-securities:
+    # Runs after all chart-*-check jobs whenever any helm component
+    # changed. `!cancelled() && !failure()` lets us proceed even if
+    # some chart-*-check were skipped (their component didn't change),
+    # while still bailing out when an upstream actually failed.
+    needs: [detect, chart-api-check, chart-web-check, chart-check]
+    if: |
+      !cancelled() && !failure() &&
+      (contains(fromJson(needs.detect.outputs.changed), 'chart-api') ||
+       contains(fromJson(needs.detect.outputs.changed), 'chart-web') ||
+       contains(fromJson(needs.detect.outputs.changed), 'chart'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: azure/setup-helm@v5
+
+      - name: Bundle umbrella subcharts
+        # Required for checkov to render the umbrella with its
+        # dependencies; same trick as chart-check above.
+        run: |
+          mkdir -p charts/myapp/charts
+          helm package charts/myapp-api -d charts/myapp/charts
+          helm package charts/myapp-web -d charts/myapp/charts
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install checkov
+        run: uv tool install checkov
+
+      - name: Run checkov on every chart
+        run: |
+          checkov --framework helm --directory charts/ \
+            --quiet --compact --output cli | tee /tmp/checkov.out
+          {
+            echo "## helm-securities"
+            echo
+            echo "**checkov** \`--framework helm --directory charts/\`"
+            echo
+            echo '```'
+            tail -n 60 /tmp/checkov.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
