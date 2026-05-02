@@ -143,19 +143,30 @@ jobs:
           echo '${{ secrets.GITHUB_TOKEN }}' | helm registry login ghcr.io \
             -u '${{ github.actor }}' --password-stdin
 
+      # Subcharts are pushed not only when they bump (chart_api / chart_web
+      # condition) but ALSO when the umbrella bumps without them — because
+      # `helm dependency update` on the umbrella resolves the version
+      # currently in Chart.yaml's dependencies block, which must already
+      # exist on ghcr. Re-pushing an unchanged version is an OCI no-op.
       - name: Package and push myapp-api subchart
-        if: steps.bump.outputs.chart_api_version != ''
+        if: >-
+          steps.bump.outputs.chart_api_version != '' ||
+          steps.bump.outputs.chart_version     != ''
         run: |
           helm package charts/myapp-api --destination /tmp
-          helm push /tmp/myapp-api-${{ steps.bump.outputs.chart_api_version }}.tgz \
-            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
+          VER=$(awk '/^version:/{print $2; exit}' charts/myapp-api/Chart.yaml)
+          helm push "/tmp/myapp-api-${VER}.tgz" \
+            "oci://ghcr.io/${{ steps.owner.outputs.value }}/charts"
 
       - name: Package and push myapp-web subchart
-        if: steps.bump.outputs.chart_web_version != ''
+        if: >-
+          steps.bump.outputs.chart_web_version != '' ||
+          steps.bump.outputs.chart_version     != ''
         run: |
           helm package charts/myapp-web --destination /tmp
-          helm push /tmp/myapp-web-${{ steps.bump.outputs.chart_web_version }}.tgz \
-            oci://ghcr.io/${{ steps.owner.outputs.value }}/charts
+          VER=$(awk '/^version:/{print $2; exit}' charts/myapp-web/Chart.yaml)
+          helm push "/tmp/myapp-web-${VER}.tgz" \
+            "oci://ghcr.io/${{ steps.owner.outputs.value }}/charts"
 
       - name: Package and push umbrella myapp chart
         if: steps.bump.outputs.chart_version != ''
