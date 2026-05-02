@@ -116,7 +116,7 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         if: steps.plan.outputs.release == 'true'
 
       # ----- helm static checks (lint + smoke render) before kind -----

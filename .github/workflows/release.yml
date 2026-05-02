@@ -93,7 +93,7 @@ jobs:
           steps.bump.outputs.api_version   != '' ||
           steps.bump.outputs.chart_version != '' ||
           steps.bump.outputs.web_version   != ''
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -146,7 +146,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         if: >-
           steps.bump.outputs.chart_api_version != '' ||
           steps.bump.outputs.chart_web_version != '' ||
