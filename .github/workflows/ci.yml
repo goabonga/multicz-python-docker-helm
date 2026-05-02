@@ -116,12 +116,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Build api docker image (no push)
+      - name: Build api docker image (load locally, no push)
         id: build_api
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: false
+          load: true   # populates outputs.imageid + outputs.digest
           tags: api:ci
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
@@ -193,12 +193,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Build web docker image (no push)
+      - name: Build web docker image (load locally, no push)
         id: build_web
         uses: docker/build-push-action@v7
         with:
           context: web
-          push: false
+          load: true   # populates outputs.imageid + outputs.digest
           tags: web:ci
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
