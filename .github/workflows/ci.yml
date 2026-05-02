@@ -154,7 +154,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   python-test:
-    needs: detect
+    needs: [detect, python-lint, python-format, python-typecheck]
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
@@ -238,7 +238,7 @@ jobs:
           PY
 
   python-audit:
-    needs: [detect, python-lint, python-format, python-typecheck, python-test]
+    needs: [detect, python-test]
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
@@ -277,7 +277,7 @@ jobs:
           exit "$RC"
 
   python-bandit:
-    needs: [detect, python-lint, python-format, python-typecheck, python-test]
+    needs: [detect, python-test]
     if: contains(fromJson(needs.detect.outputs.changed), 'api')
     runs-on: ubuntu-latest
     steps:
@@ -438,7 +438,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   js-test:
-    needs: detect
+    needs: [detect, js-lint, js-format, js-typecheck]
     if: contains(fromJson(needs.detect.outputs.changed), 'web')
     runs-on: ubuntu-latest
     defaults:
@@ -470,7 +470,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   js-container:
-    needs: [js-lint, js-format, js-typecheck, js-test]
+    needs: [js-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
