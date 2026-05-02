@@ -10,7 +10,13 @@ initial_version = "0.0.0"
 # the new appVersion immutably.
 [components.api]
 paths      = ["src/**", "pyproject.toml", "tests/**", "Dockerfile"]
-bump_files = [{ file = "pyproject.toml", key = "project.version" }]
+bump_files = [
+    { file = "pyproject.toml", key = "project.version" },
+    # Regex escape hatch: keep `__version__` in the package's __init__
+    # in sync with pyproject.toml. The first capture group is rewritten;
+    # surrounding code (docstrings, imports, …) is preserved as-is.
+    { file = "src/api/__init__.py", key = 'regex:^__version__\s*=\s*"([^"]+)"' },
+]
 mirrors    = [{ file = "charts/myapp/Chart.yaml", key = "appVersion" }]
 changelog  = "CHANGELOG.md"
 post_bump  = ["uv lock"]
