@@ -409,15 +409,23 @@ jobs:
         run: uv tool install checkov
 
       - name: Run checkov on every chart
+        # Default shell is `bash -e` without pipefail, so a failing
+        # `checkov` piped into `tee` would silently exit 0. Force the
+        # pipeline's exit to be checkov's, and emit the summary even
+        # on failure so findings are visible in the run UI.
+        shell: bash --noprofile --norc -eo pipefail {0}
         run: |
+          set +e
           checkov --framework helm --directory charts/ \
             --quiet --compact --output cli | tee /tmp/checkov.out
+          RC=${PIPESTATUS[0]}
           {
             echo "## helm-securities"
             echo
-            echo "**checkov** \`--framework helm --directory charts/\`"
+            echo "**checkov** \`--framework helm --directory charts/\` — exit $RC"
             echo
             echo '```'
             cat /tmp/checkov.out
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
