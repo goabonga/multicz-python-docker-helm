@@ -1,26 +1,24 @@
 name: release
 
-# Demo release pipeline driven by multicz.
+# Build + publish pipeline. Runs after `integration` finishes green
+# on main:
 #
-# Runs after the `ci` workflow finishes green on main:
-#   1. plan the release (skip the rest if nothing pending)
-#   2. bump pyproject.toml + Chart.yaml + uv.lock + CHANGELOGs, commit
-#      and tag LOCALLY (no push yet)
-#   3. build api + web docker images at the future tags
-#   4. spin up a kind cluster, helm install the umbrella with the
-#      locally-loaded images, and verify api `/version` + web
-#      `/version.json` return the future versions
-#   5. only after smoke tests pass: `git push --follow-tags` and push
-#      images + helm subcharts + umbrella to ghcr.io
-#   6. open one GitHub Release per new tag, with notes from
-#      `multicz release-notes`
+#   1. plan the release (skip if nothing pending)
+#   2. multicz bump --commit --tag --push (commit + tag + push)
+#   3. push api + web docker images to ghcr.io
+#   4. package + push myapp-api and myapp-web subcharts to ghcr.io
+#   5. helm dependency update + package + push umbrella
+#   6. open one GitHub Release per new tag (notes from
+#      `multicz release-notes`)
 #
-# If smoke tests fail in step 4, the local commit + tags die with the
-# ephemeral runner and the remote sees no release.
+# All version-correctness validation lives in `integration.yml` —
+# that workflow runs the kind smoke test against the planned
+# versions, and gates this one. By the time we get here the bump is
+# known-good.
 
 on:
   workflow_run:
-    workflows: [ci]
+    workflows: [integration]
     types: [completed]
     branches: [main]
 
@@ -67,11 +65,11 @@ jobs:
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Bump, commit, tag (local; push deferred until smoke tests pass)
+      - name: Bump, commit, tag, push
         id: bump
         if: steps.plan.outputs.release == 'true'
         run: |
-          multicz bump --commit --tag \
+          multicz bump --commit --tag --push \
             --summary "$GITHUB_STEP_SUMMARY" --output json | tee /tmp/release.json
           API=$(jq -r       '.bumps.api.next_version          // empty' /tmp/release.json)
           WEB=$(jq -r       '.bumps.web.next_version          // empty' /tmp/release.json)
@@ -84,9 +82,6 @@ jobs:
           echo "chart_web_version=$CHART_WEB" >> "$GITHUB_OUTPUT"
           echo "chart_version=$CHART"         >> "$GITHUB_OUTPUT"
 
-      # ghcr.io owners must be lowercase; GitHub usernames usually are
-      # already, but normalise anyway so forks under mixed-case org
-      # names don't break.
       - name: Compute lowercase owner
         if: steps.plan.outputs.release == 'true'
         id: owner
@@ -107,149 +102,35 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
 
-      # ----- Phase 1: build images locally with the future tags -----
-      # `load: true` puts them in the local docker daemon (smoke test)
-      # without pushing yet. The matching `docker push` happens after
-      # smoke tests pass.
-
-      - name: Build api image (load locally)
+      - name: Build and push api image
         if: steps.bump.outputs.api_version != ''
         uses: docker/build-push-action@v6
         with:
           context: .
-          load: true
+          push: true
           tags: |
             ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}
             ghcr.io/${{ steps.owner.outputs.value }}/myapp:latest
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
-      - name: Build web image (load locally)
+      - name: Build and push web image
         if: steps.bump.outputs.web_version != ''
         uses: docker/build-push-action@v6
         with:
           context: web
-          load: true
+          push: true
           tags: |
             ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
             ghcr.io/${{ steps.owner.outputs.value }}/web:latest
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
-      # ----- Phase 2: kind smoke test (deploy the chart, hit endpoints) -----
-      # Validates not just that the images embed the right versions but
-      # that the umbrella chart actually deploys cleanly with them.
-
       - uses: azure/setup-helm@v4
-        if: steps.plan.outputs.release == 'true'
-
-      - name: Set up kind cluster
-        if: steps.plan.outputs.release == 'true'
-        uses: helm/kind-action@v1
-        with:
-          cluster_name: smoke
-
-      - name: Load smoke images into kind
-        if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
-        run: |
-          if [ -n "${{ steps.bump.outputs.api_version }}" ]; then
-            kind load docker-image \
-              "ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}" \
-              --name smoke
-          fi
-          if [ -n "${{ steps.bump.outputs.web_version }}" ]; then
-            kind load docker-image \
-              "ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}" \
-              --name smoke
-          fi
-
-      - name: Bundle subcharts into umbrella for the smoke install
-        if: steps.bump.outputs.chart_version != ''
-        run: |
-          # Side-step the OCI bootstrap chicken-and-egg: package each
-          # subchart into the umbrella's charts/ directory so helm
-          # install resolves them locally instead of fetching from ghcr
-          # (where they aren't pushed yet).
-          mkdir -p charts/myapp/charts
-          helm package charts/myapp-api -d charts/myapp/charts
-          helm package charts/myapp-web -d charts/myapp/charts
-
-      - name: Helm install umbrella in kind
-        if: steps.bump.outputs.chart_version != ''
-        run: |
-          # `--wait` blocks until every resource (deployments, pods,
-          # services) reaches ready state. `kubectl wait` directly on
-          # pods races the controller — pods aren't created the
-          # moment helm install returns.
-          helm install demo charts/myapp \
-            --wait --timeout 120s \
-            --set "myapp-api.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/myapp" \
-            --set "myapp-api.image.pullPolicy=IfNotPresent" \
-            --set "myapp-web.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/web" \
-            --set "myapp-web.image.pullPolicy=IfNotPresent"
-
-      - name: Smoke test endpoints via port-forward
-        if: steps.bump.outputs.chart_version != ''
-        env:
-          API_EXPECTED: ${{ steps.bump.outputs.api_version }}
-          WEB_EXPECTED: ${{ steps.bump.outputs.web_version }}
-        run: |
-          set -e
-          kubectl port-forward svc/demo-myapp-api 8000:8000 >/dev/null 2>&1 &
-          PF_API=$!
-          kubectl port-forward svc/demo-myapp-web 8080:80 >/dev/null 2>&1 &
-          PF_WEB=$!
-          trap 'kill $PF_API $PF_WEB 2>/dev/null || true' EXIT
-
-          for i in $(seq 1 20); do
-            curl -fsS http://localhost:8000/health >/dev/null 2>&1 && \
-            curl -fsS http://localhost:8080/version.json >/dev/null 2>&1 && break
-            sleep 1
-          done
-
-          if [ -n "$API_EXPECTED" ]; then
-            GOT=$(curl -fsS http://localhost:8000/version | jq -r .version)
-            if [ "$GOT" != "$API_EXPECTED" ]; then
-              echo "::error::api /version returned '$GOT', expected '$API_EXPECTED'"
-              kubectl logs -l app.kubernetes.io/component=api --tail=50 || true
-              exit 1
-            fi
-            echo "✓ api /version = $GOT"
-          fi
-
-          if [ -n "$WEB_EXPECTED" ]; then
-            GOT=$(curl -fsS http://localhost:8080/version.json | jq -r .version)
-            if [ "$GOT" != "$WEB_EXPECTED" ]; then
-              echo "::error::web /version.json returned '$GOT', expected '$WEB_EXPECTED'"
-              kubectl logs -l app.kubernetes.io/component=web --tail=50 || true
-              exit 1
-            fi
-            echo "✓ web /version.json = $GOT"
-          fi
-
-      - name: Helm uninstall + clean local subchart bundle
-        if: always() && steps.bump.outputs.chart_version != ''
-        run: |
-          helm uninstall demo 2>/dev/null || true
-          rm -rf charts/myapp/charts
-
-      # ----- Phase 3: smoke OK — publish (commit, tags, images, charts) -----
-
-      - name: Push commit + tags
-        if: steps.plan.outputs.release == 'true'
-        run: git push --follow-tags
-
-      - name: Push api image to ghcr
-        if: steps.bump.outputs.api_version != ''
-        run: |
-          docker push ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}
-          docker push ghcr.io/${{ steps.owner.outputs.value }}/myapp:latest
-
-      - name: Push web image to ghcr
-        if: steps.bump.outputs.web_version != ''
-        run: |
-          docker push ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
-          docker push ghcr.io/${{ steps.owner.outputs.value }}/web:latest
+        if: >-
+          steps.bump.outputs.chart_api_version != '' ||
+          steps.bump.outputs.chart_web_version != '' ||
+          steps.bump.outputs.chart_version     != ''
 
       - name: Helm registry login
         if: >-

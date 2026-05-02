@@ -1,0 +1,178 @@
+name: integration
+
+# Runs after `ci` finishes green on main. Validates the upcoming
+# release end-to-end without publishing anything:
+#
+#   1. plan the release (skip if nothing pending)
+#   2. apply the bump to the working tree (no commit, no tag, no push)
+#   3. build api + web docker images at the future tags
+#   4. spin up a kind cluster, load the images
+#   5. package the subcharts into the umbrella's charts/ directory and
+#      `helm install --wait` (so subchart deps resolve locally instead
+#      of via OCI before they exist on ghcr)
+#   6. port-forward, curl `/version` and `/version.json`, fail the
+#      workflow if either doesn't return the planned version
+#
+# The `release` workflow is gated on this one passing — a regression
+# in this pipeline is a hard stop before any image, chart, or tag
+# reaches the remote.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          !startsWith(github.event.workflow_run.head_commit.message, 'chore(release)') }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install multicz
+        run: uv tool install multicz
+
+      - name: Plan
+        id: plan
+        run: |
+          multicz plan --summary "$GITHUB_STEP_SUMMARY" \
+            --output json | tee /tmp/plan.json
+          if [ "$(jq '.bumps | length' /tmp/plan.json)" = "0" ]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "no release pending — nothing to integration-test"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply bump to working tree (writes only, no commit)
+        id: bump
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          multicz bump --output json | tee /tmp/bump.json
+          API=$(jq -r       '.bumps.api.next_version          // empty' /tmp/bump.json)
+          WEB=$(jq -r       '.bumps.web.next_version          // empty' /tmp/bump.json)
+          CHART=$(jq -r     '.bumps.chart.next_version        // empty' /tmp/bump.json)
+          echo "api_version=$API"     >> "$GITHUB_OUTPUT"
+          echo "web_version=$WEB"     >> "$GITHUB_OUTPUT"
+          echo "chart_version=$CHART" >> "$GITHUB_OUTPUT"
+
+      - name: Compute lowercase owner
+        if: steps.plan.outputs.release == 'true'
+        id: owner
+        run: |
+          echo "value=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
+
+      - name: Build api image (load locally for kind)
+        if: steps.bump.outputs.api_version != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build web image (load locally for kind)
+        if: steps.bump.outputs.web_version != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          load: true
+          tags: ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      - uses: azure/setup-helm@v4
+        if: steps.plan.outputs.release == 'true'
+
+      - name: Set up kind cluster
+        if: steps.plan.outputs.release == 'true'
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: smoke
+
+      - name: Load smoke images into kind
+        if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
+        run: |
+          if [ -n "${{ steps.bump.outputs.api_version }}" ]; then
+            kind load docker-image \
+              "ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}" \
+              --name smoke
+          fi
+          if [ -n "${{ steps.bump.outputs.web_version }}" ]; then
+            kind load docker-image \
+              "ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}" \
+              --name smoke
+          fi
+
+      - name: Bundle subcharts into umbrella for the smoke install
+        if: steps.bump.outputs.chart_version != ''
+        run: |
+          mkdir -p charts/myapp/charts
+          helm package charts/myapp-api -d charts/myapp/charts
+          helm package charts/myapp-web -d charts/myapp/charts
+
+      - name: Helm install umbrella in kind
+        if: steps.bump.outputs.chart_version != ''
+        run: |
+          helm install demo charts/myapp \
+            --wait --timeout 120s \
+            --set "myapp-api.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/myapp" \
+            --set "myapp-api.image.pullPolicy=IfNotPresent" \
+            --set "myapp-web.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/web" \
+            --set "myapp-web.image.pullPolicy=IfNotPresent"
+
+      - name: Smoke test endpoints via port-forward
+        if: steps.bump.outputs.chart_version != ''
+        env:
+          API_EXPECTED: ${{ steps.bump.outputs.api_version }}
+          WEB_EXPECTED: ${{ steps.bump.outputs.web_version }}
+        run: |
+          set -e
+          kubectl port-forward svc/demo-myapp-api 8000:8000 >/dev/null 2>&1 &
+          PF_API=$!
+          kubectl port-forward svc/demo-myapp-web 8080:80 >/dev/null 2>&1 &
+          PF_WEB=$!
+          trap 'kill $PF_API $PF_WEB 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 20); do
+            curl -fsS http://localhost:8000/health >/dev/null 2>&1 && \
+            curl -fsS http://localhost:8080/version.json >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          if [ -n "$API_EXPECTED" ]; then
+            GOT=$(curl -fsS http://localhost:8000/version | jq -r .version)
+            if [ "$GOT" != "$API_EXPECTED" ]; then
+              echo "::error::api /version returned '$GOT', expected '$API_EXPECTED'"
+              kubectl logs -l app.kubernetes.io/component=api --tail=50 || true
+              exit 1
+            fi
+            echo "✓ api /version = $GOT"
+          fi
+
+          if [ -n "$WEB_EXPECTED" ]; then
+            GOT=$(curl -fsS http://localhost:8080/version.json | jq -r .version)
+            if [ "$GOT" != "$WEB_EXPECTED" ]; then
+              echo "::error::web /version.json returned '$GOT', expected '$WEB_EXPECTED'"
+              kubectl logs -l app.kubernetes.io/component=web --tail=50 || true
+              exit 1
+            fi
+            echo "✓ web /version.json = $GOT"
+          fi
