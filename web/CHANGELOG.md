@@ -2,6 +2,16 @@
 
 All notable changes to this component are documented here.
 
+## [0.2.0] - 2026-05-02
+
+### Features
+
+- **release**: kind smoke test gates the push (`7821913`)
+
+### Fixes
+
+- **web**: copy scripts/ into the build stage (`a552a8b`)
+
 ## [0.1.0] - 2026-05-02
 
 ### Features
