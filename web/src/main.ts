@@ -1,13 +1,14 @@
 import { VERSION } from "./version.ts";
 
-// Where the SPA hits the api. Injected at build time via
-// `--build-arg VITE_API_URL=...` (vite substitutes
-// `import.meta.env.VITE_*` into the bundle). Default `/api` keeps
-// the same-origin pattern for `vite dev` setups behind a proxy or
-// a unified ingress; in the demo's kind deployment we set it to
-// `http://api.myapp.local` for cross-origin via the per-subchart
-// ingresses + CORS on the api.
-const API_URL = import.meta.env.VITE_API_URL ?? "/api";
+// Where the SPA hits the api. Provided at runtime by /config.js,
+// which is loaded as a plain (non-module) script ahead of this
+// module in index.html. In the demo's kind deployment that file is
+// rendered into the helm ConfigMap from `myapp-web.config.apiUrl`
+// and mounted over /usr/share/nginx/html/config.js — change the
+// value, restart the pod, no rebuild. Local `vite dev` / preview
+// uses `public/config.js`'s empty default and falls through to
+// the same-origin `/api` path.
+const API_URL = window.APP_CONFIG?.API_URL || "/api";
 
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {

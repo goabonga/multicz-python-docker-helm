@@ -20,6 +20,11 @@
   </head>
   <body>
     <main id="app"></main>
+    <!-- Runtime config (window.APP_CONFIG) — loaded as a plain
+         script so it executes before any module. In production
+         the helm ConfigMap mounts a rendered version over the
+         placeholder shipped in public/config.js. -->
+    <script src="/config.js"></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

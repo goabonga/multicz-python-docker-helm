@@ -78,6 +78,15 @@ extraVolumes:
 
 automountServiceAccountToken: false
 
+# Runtime config injected into the SPA via window.APP_CONFIG. The
+# chart renders this into a ConfigMap and mounts it at
+# /usr/share/nginx/html/config.js (overlaying the empty placeholder
+# baked into the docker image). Setting apiUrl to e.g.
+# "http://api.myapp.local" lets the SPA fetch a different host
+# without rebuilding the image.
+config:
+  apiUrl: ""
+
 networkPolicy:
   enabled: false
 

@@ -1,13 +1,5 @@
 FROM node:24-alpine AS build
 
-# Build-time api endpoint for the SPA. Vite reads VITE_* env vars
-# at build and inlines them into the bundle. Default empty falls
-# back to "/api" inside main.ts. Pass with:
-#
-#   docker build --build-arg VITE_API_URL=https://api.example.com .
-ARG VITE_API_URL=""
-ENV VITE_API_URL=$VITE_API_URL
-
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -16,6 +8,9 @@ RUN npm ci
 COPY tsconfig.json vite.config.ts index.html ./
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+# vite copies public/ verbatim into dist/ — that's where the
+# placeholder config.js lives until helm overrides it at runtime.
+COPY public/ ./public/
 RUN npm run build
 
 # Distroless nginx — runs as nonroot UID 65532, no shell, no package

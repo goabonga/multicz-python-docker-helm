@@ -121,13 +121,6 @@ jobs:
           context: web
           load: true
           tags: ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
-          # Bake the cross-origin api URL into the SPA bundle so
-          # `fetch(`${API_URL}/version`)` hits the api ingress (kind
-          # extraPortMapping 80 + /etc/hosts pin → ingress-nginx →
-          # api Service). The api allows the cross-origin via its
-          # CORS middleware (default origins=*).
-          build-args: |
-            VITE_API_URL=http://api.myapp.local
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
@@ -272,6 +265,11 @@ jobs:
           # turns the api on at api.myapp.local and the web at
           # myapp.local; ingressClassName=nginx routes them through
           # the ingress-nginx controller installed above.
+          # `myapp-web.config.apiUrl` is rendered into the chart's
+          # ConfigMap and mounted as /usr/share/nginx/html/config.js
+          # — the SPA reads window.APP_CONFIG.API_URL at startup, so
+          # the same docker image deploys cross-origin (here) or
+          # same-origin (other envs) just by flipping this value.
           helm install demo charts/myapp \
             --wait --timeout 120s \
             --namespace myapp --create-namespace \
@@ -282,7 +280,8 @@ jobs:
             --set "myapp-web.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/web" \
             --set "myapp-web.image.pullPolicy=IfNotPresent" \
             --set "myapp-web.ingress.enabled=true" \
-            --set "myapp-web.ingress.className=nginx"
+            --set "myapp-web.ingress.className=nginx" \
+            --set "myapp-web.config.apiUrl=http://api.myapp.local"
           {
             echo
             echo "### Helm release"
