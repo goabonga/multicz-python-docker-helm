@@ -2,6 +2,22 @@
 
 All notable changes to this component are documented here.
 
+## [0.2.0] - 2026-05-03
+
+### Features
+
+- switch api and web base images to chainguard distroless (`fb7e97e`)
+
+### Fixes
+
+- set CPU + memory limits/requests on api and web charts (`6d64d22`)
+- **charts**: harden api+web pods to clear all checkov findings (`4d57d96`)
+- **chart-web**: mount the writable paths chainguard nginx actually uses (`084b4a7`)
+
+### Dependencies
+
+- Track `web` `0.5.0`
+
 ## [0.1.0] - 2026-05-02
 
 ### Features

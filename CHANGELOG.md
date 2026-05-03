@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.5.0] - 2026-05-03
+
+### Features
+
+- switch api and web base images to chainguard distroless (`fb7e97e`)
+
 ## [0.4.0] - 2026-05-02
 
 ### Features
