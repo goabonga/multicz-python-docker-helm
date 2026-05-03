@@ -6,6 +6,17 @@
 # Format: <rule-id>\t<IGNORE|WARN|FAIL>\t<comment>
 # Tabs only — ZAP's parser rejects spaces.
 #
+# 10049 — Storable and Cacheable / Non-Storable Content.
+# Two-faced rule: warns on storable content (might leak via
+# shared caches) AND on non-storable content (perf). We tried
+# `private, max-age=0, must-revalidate` (storable in private
+# cache only, always revalidate via 304) hoping it would dodge
+# both variants — turns out ZAP's 10049 heuristic flags any
+# `must-revalidate` as Non-Storable. The cache policy is the
+# right shape for our SPA entry + runtime config (always-fresh
+# is the whole point); ZAP's commentary stays informational.
+10049	IGNORE	private+revalidate is deliberate; ZAP flags must-revalidate as non-storable regardless
+#
 # 10109 — Modern Web Application.
 # Informational notice: ZAP detected an SPA pattern (client-side
 # routing, no traditional links). Not a vulnerability, just a

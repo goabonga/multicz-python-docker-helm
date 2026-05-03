@@ -1,3 +1,4 @@
+import "./style.css";
 import { VERSION } from "./version.ts";
 
 // Where the SPA hits the api. Provided at runtime by /config.js,

@@ -15,3 +15,12 @@
 # paths don't exist on the api — so this is a known false
 # positive on every FastAPI service.
 100001	IGNORE	cloud-metadata probe — FastAPI 404 JSON, no actual exposure
+#
+# 10106 — HTTP Only Site.
+# The demo's kind cluster runs ingress-nginx on port 80 only,
+# no TLS — there's no in-cluster cert manager and no public
+# DNS to acquire one through. Production deploys terminate TLS
+# at a real ingress (cloud LB, cert-manager, etc.); the rule
+# would PASS there. For the demo's HTTP-only loopback target
+# this is expected.
+10106	IGNORE	demo kind cluster has no TLS by design — terminate at ingress in prod
