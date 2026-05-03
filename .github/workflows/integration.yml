@@ -6,12 +6,16 @@ name: integration
 #   1. plan the release (skip if nothing pending)
 #   2. apply the bump to the working tree (no commit, no tag, no push)
 #   3. build api + web docker images at the future tags
-#   4. spin up a kind cluster, load the images
-#   5. package the subcharts into the umbrella's charts/ directory and
-#      `helm install --wait` (subchart deps resolve locally — avoids
-#      the ghcr OCI bootstrap before subcharts exist there)
-#   6. port-forward, curl `/version` and `/version.json`, fail the
-#      workflow if either doesn't return the planned version
+#   4. spin up a kind cluster with extraPortMappings 80/443 + ingress-
+#      ready node label, install the kubernetes/ingress-nginx
+#      controller manifest, wait for it to be Ready
+#   5. package the subcharts into the umbrella's charts/ directory
+#      and `helm install --wait` with ingress.enabled=true on both
+#      subcharts (matches the production helm install path that the
+#      release pipeline uses, minus pushing the artifacts)
+#   6. curl the future versions through the ingress
+#      (Host: api.myapp.local /version, Host: myapp.local /version.json)
+#      and fail if either doesn't match the planned version
 #
 # Static helm checks (lint + smoke render) live in `ci.yml`'s
 # chart-{api,web,}-check jobs and gate this pipeline upstream.
@@ -99,6 +103,7 @@ jobs:
         if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
 
       - name: Build api image (load locally for kind)
+        id: build_api
         if: steps.bump.outputs.api_version != ''
         uses: docker/build-push-action@v7
         with:
@@ -109,6 +114,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build web image (load locally for kind)
+        id: build_web
         if: steps.bump.outputs.web_version != ''
         uses: docker/build-push-action@v7
         with:
@@ -117,6 +123,23 @@ jobs:
           tags: ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
+
+      - name: Build summary
+        if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
+        run: |
+          {
+            echo
+            echo "### Built images (load: true, no push)"
+            echo
+            echo "| image | tag | digest |"
+            echo "|---|---|---|"
+            if [ -n "${{ steps.bump.outputs.api_version }}" ]; then
+              echo "| ghcr.io/${{ steps.owner.outputs.value }}/myapp | \`${{ steps.bump.outputs.api_version }}\` | \`${{ steps.build_api.outputs.digest }}\` |"
+            fi
+            if [ -n "${{ steps.bump.outputs.web_version }}" ]; then
+              echo "| ghcr.io/${{ steps.owner.outputs.value }}/web | \`${{ steps.bump.outputs.web_version }}\` | \`${{ steps.build_web.outputs.digest }}\` |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: azure/setup-helm@v5
         if: steps.plan.outputs.release == 'true'
@@ -130,12 +153,83 @@ jobs:
           mkdir -p charts/myapp/charts
           helm package charts/myapp-api -d charts/myapp/charts
           helm package charts/myapp-web -d charts/myapp/charts
+          {
+            echo
+            echo "### Subchart bundle"
+            echo
+            echo '```'
+            ls -la charts/myapp/charts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write kind config (ingress port mappings)
+        if: steps.plan.outputs.release == 'true'
+        # Two changes from kind defaults:
+        #  - extraPortMappings 80/443 host -> control-plane container
+        #    so curls hitting localhost reach the ingress controller
+        #  - node-label `ingress-ready=true` so the official
+        #    kubernetes/ingress-nginx kind manifest's nodeSelector
+        #    can pin the controller to this node
+        run: |
+          mkdir -p /tmp/kind
+          cat > /tmp/kind/config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              kubeadmConfigPatches:
+                - |
+                  kind: InitConfiguration
+                  nodeRegistration:
+                    kubeletExtraArgs:
+                      node-labels: "ingress-ready=true"
+              extraPortMappings:
+                - containerPort: 80
+                  hostPort: 80
+                  protocol: TCP
+                - containerPort: 443
+                  hostPort: 443
+                  protocol: TCP
+          EOF
 
       - name: Set up kind cluster
         if: steps.plan.outputs.release == 'true'
         uses: helm/kind-action@v1
         with:
           cluster_name: smoke
+          config: /tmp/kind/config.yaml
+
+      - name: Cluster summary
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          kubectl cluster-info > /tmp/cluster.txt
+          kubectl get nodes -o wide > /tmp/nodes.txt
+          {
+            echo
+            echo "### Kind cluster"
+            echo
+            echo '```'
+            cat /tmp/cluster.txt
+            echo
+            cat /tmp/nodes.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install ingress-nginx controller
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          kubectl apply -f \
+            https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl -n ingress-nginx \
+            rollout status deployment/ingress-nginx-controller --timeout=180s
+          {
+            echo
+            echo "### Ingress controller"
+            echo
+            echo '```'
+            kubectl -n ingress-nginx get pods,svc
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Load smoke images into kind
         if: steps.bump.outputs.api_version != '' || steps.bump.outputs.web_version != ''
@@ -150,58 +244,89 @@ jobs:
               "ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}" \
               --name smoke
           fi
+          {
+            echo
+            echo "### Loaded images"
+            echo
+            echo '```'
+            kubectl get nodes -o jsonpath='{range .items[*]}{.status.images[*].names[*]}{"\n"}{end}' \
+              | tr ' ' '\n' \
+              | grep -E 'goabonga/(myapp|web):' \
+              | sort -u || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Helm install umbrella in kind
+      - name: Helm install umbrella in kind (with ingress)
         if: steps.bump.outputs.chart_version != ''
         run: |
-          # --namespace myapp matches the chart's hardened defaults
-          # (CKV_K8S_21 — no default namespace). pullPolicy=IfNotPresent
-          # forces helm to use the kind-loaded image instead of pulling
-          # from ghcr (where the image isn't yet pushed).
+          # --namespace myapp matches the hardened chart defaults
+          # (CKV_K8S_21). pullPolicy=IfNotPresent forces use of the
+          # kind-loaded image. ingress.enabled=true on both subcharts
+          # turns the api on at api.myapp.local and the web at
+          # myapp.local; ingressClassName=nginx routes them through
+          # the ingress-nginx controller installed above.
           helm install demo charts/myapp \
             --wait --timeout 120s \
             --namespace myapp --create-namespace \
             --set "myapp-api.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/myapp" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
+            --set "myapp-api.ingress.enabled=true" \
+            --set "myapp-api.ingress.className=nginx" \
             --set "myapp-web.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/web" \
-            --set "myapp-web.image.pullPolicy=IfNotPresent"
+            --set "myapp-web.image.pullPolicy=IfNotPresent" \
+            --set "myapp-web.ingress.enabled=true" \
+            --set "myapp-web.ingress.className=nginx"
+          {
+            echo
+            echo "### Helm release"
+            echo
+            echo '```'
+            helm list -n myapp
+            echo
+            kubectl -n myapp get all,ingress
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Smoke test endpoints via port-forward
+      - name: Wait for ingress to route
+        if: steps.bump.outputs.chart_version != ''
+        # ingress objects can take a moment to wire up — retry until
+        # at least one of the routes returns 2xx (the smoke step
+        # below validates the body content separately).
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null -H "Host: myapp.local" http://localhost/version.json && \
+            curl -fsS -o /dev/null -H "Host: api.myapp.local" http://localhost/health && \
+            break
+            sleep 2
+          done
+
+      - name: Smoke test through nginx ingress
         if: steps.bump.outputs.chart_version != ''
         env:
           API_EXPECTED: ${{ steps.bump.outputs.api_version }}
           WEB_EXPECTED: ${{ steps.bump.outputs.web_version }}
         run: |
           set -e
-          kubectl -n myapp port-forward svc/demo-myapp-api 8000:8000 >/dev/null 2>&1 &
-          PF_API=$!
-          kubectl -n myapp port-forward svc/demo-myapp-web 8080:80 >/dev/null 2>&1 &
-          PF_WEB=$!
-          trap 'kill $PF_API $PF_WEB 2>/dev/null || true' EXIT
-
-          for i in $(seq 1 20); do
-            curl -fsS http://localhost:8000/health >/dev/null 2>&1 && \
-            curl -fsS http://localhost:8080/version.json >/dev/null 2>&1 && break
-            sleep 1
-          done
-
           {
             echo
-            echo "### Smoke test"
+            echo "### Smoke test (via nginx ingress)"
             echo
-            echo "| endpoint | expected | got | status |"
+            echo "| host + path | expected | got | status |"
             echo "|---|---|---|---|"
           } >> "$GITHUB_STEP_SUMMARY"
 
           FAIL=0
 
           if [ -n "$API_EXPECTED" ]; then
-            GOT=$(curl -fsS http://localhost:8000/version | jq -r .version)
+            GOT=$(curl -fsS -H "Host: api.myapp.local" \
+              http://localhost/version | jq -r .version)
             if [ "$GOT" = "$API_EXPECTED" ]; then
-              echo "| api \`/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✓ |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| \`api.myapp.local/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✓ |" \
+                >> "$GITHUB_STEP_SUMMARY"
               echo "✓ api /version = $GOT"
             else
-              echo "| api \`/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✗ |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| \`api.myapp.local/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✗ |" \
+                >> "$GITHUB_STEP_SUMMARY"
               echo "::error::api /version returned '$GOT', expected '$API_EXPECTED'"
               kubectl -n myapp logs -l app.kubernetes.io/component=api --tail=50 || true
               FAIL=1
@@ -209,12 +334,15 @@ jobs:
           fi
 
           if [ -n "$WEB_EXPECTED" ]; then
-            GOT=$(curl -fsS http://localhost:8080/version.json | jq -r .version)
+            GOT=$(curl -fsS -H "Host: myapp.local" \
+              http://localhost/version.json | jq -r .version)
             if [ "$GOT" = "$WEB_EXPECTED" ]; then
-              echo "| web \`/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✓ |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| \`myapp.local/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✓ |" \
+                >> "$GITHUB_STEP_SUMMARY"
               echo "✓ web /version.json = $GOT"
             else
-              echo "| web \`/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✗ |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| \`myapp.local/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✗ |" \
+                >> "$GITHUB_STEP_SUMMARY"
               echo "::error::web /version.json returned '$GOT', expected '$WEB_EXPECTED'"
               kubectl -n myapp logs -l app.kubernetes.io/component=web --tail=50 || true
               FAIL=1
