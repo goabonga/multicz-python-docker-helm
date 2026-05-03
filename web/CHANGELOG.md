@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.0] - 2026-05-03
+
+### Features
+
+- **security**: close ZAP baseline web findings + api CORP for COEP (`b753b1e`)
+
 ## [0.6.0] - 2026-05-03
 
 ### Features
