@@ -24,6 +24,26 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _security_headers(request, call_next):  # type: ignore[no-untyped-def]
+    """Attach cross-origin headers the SPA's COEP requires.
+
+    With the web nginx config setting
+    `Cross-Origin-Embedder-Policy: require-corp`, every cross-origin
+    resource the SPA loads (including this api's JSON responses)
+    must carry a `Cross-Origin-Resource-Policy` header explicitly
+    granting the embed. `cross-origin` is the most permissive value
+    and matches the demo's CORS allow-all default.
+
+    Also sends `X-Content-Type-Options: nosniff` so browsers respect
+    our `application/json` content type and don't sniff the body.
+    """
+    response = await call_next(request)
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @lru_cache(maxsize=1)
 def _app_version() -> str:
     try:

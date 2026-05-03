@@ -20,5 +20,11 @@ RUN npm run build
 FROM cgr.dev/chainguard/nginx:latest AS runtime
 
 COPY --from=build /app/dist /usr/share/nginx/html
+# Override chainguard's default site config — adds CSP, X-Frame,
+# nosniff, Permissions-Policy, COEP/COOP/CORP, no-store on the SPA
+# entry, immutable on /assets/, plain-text error pages without the
+# nginx banner. Closes the OWASP ZAP baseline findings that the
+# default config trips.
+COPY nginx/default.conf /etc/nginx/conf.d/nginx.default.conf
 
 EXPOSE 8080
