@@ -388,6 +388,10 @@ jobs:
     needs: python-sbom
     runs-on: ubuntu-latest
     steps:
+      # Checkout for the repo-level `grype.yaml` ignore list — see
+      # that file for the rationale of each whitelisted CVE.
+      - uses: actions/checkout@v6
+
       - uses: actions/download-artifact@v8
         with:
           name: api-sbom
@@ -402,10 +406,12 @@ jobs:
         # `--fail-on high` means findings of severity high or critical
         # exit non-zero. Medium/low/negligible are reported but don't
         # block. Tighten to `medium` if you want stricter gating.
+        # `--config grype.yaml` honors the repo-level ignore list.
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set +e
           grype sbom:/tmp/api.sbom.spdx.json --fail-on high \
+            --config grype.yaml \
             --output table | tee /tmp/grype.out
           RC=${PIPESTATUS[0]}
           {
@@ -665,6 +671,8 @@ jobs:
     needs: js-sbom
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
       - uses: actions/download-artifact@v8
         with:
           name: web-sbom
@@ -680,6 +688,7 @@ jobs:
         run: |
           set +e
           grype sbom:/tmp/web.sbom.spdx.json --fail-on high \
+            --config grype.yaml \
             --output table | tee /tmp/grype.out
           RC=${PIPESTATUS[0]}
           {

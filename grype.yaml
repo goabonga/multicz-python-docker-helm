@@ -1,0 +1,22 @@
+# Grype config — explicit, named, time-bounded vulnerability ignores.
+#
+# Each entry below is a HIGH severity finding from chainguard's
+# `:latest` images that hasn't yet propagated through the daily
+# rebuild. Once chainguard ships the patched apk package the entry
+# disappears from grype's report on its own — review and prune this
+# file each release cycle.
+#
+# Anything NOT listed here keeps failing the pipeline as expected.
+
+ignore:
+  # glibc 2.43-r7 — present on both api and web chainguard runtime.
+  # Track upstream: https://nvd.nist.gov/vuln/detail/CVE-2026-5435
+  - vulnerability: CVE-2026-5435
+    package:
+      name: glibc
+
+  # python-3.14 3.14.4-r3 — present on api runtime only.
+  # Track upstream: https://nvd.nist.gov/vuln/detail/CVE-2026-3298
+  - vulnerability: CVE-2026-3298
+    package:
+      name: python-3.14
