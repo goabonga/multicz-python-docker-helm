@@ -726,11 +726,25 @@ jobs:
         # njsscan (LGPL-3.0) is a Node.js / JavaScript-focused SAST
         # scanner from MobSF — pattern + semantic grep over the
         # source. Default exit is non-zero on findings.
+        #
+        # The default output is loud on a non-TTY runner: libsast
+        # emits \r-overwritten progress bars (which `tee` preserves
+        # as separate lines) and click prints ANSI color codes
+        # regardless of NO_COLOR. Capture raw output to a file, then
+        # post-process: \r -> \n so the bars become discardable
+        # lines, strip ANSI escapes, drop the per-pattern progress
+        # lines. Exit code is captured before the cleanup pipeline
+        # so a failed scan still hard-fails the job.
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set +e
-          njsscan web/src 2>&1 | tee /tmp/njsscan.out
-          RC=${PIPESTATUS[0]}
+          njsscan web/src > /tmp/njsscan.raw 2>&1
+          RC=$?
+          tr '\r' '\n' < /tmp/njsscan.raw \
+            | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
+            | grep -vE '^- Pattern Match|^- Semantic Grep|^$' \
+            > /tmp/njsscan.out
+          cat /tmp/njsscan.out
           {
             echo "## js-njsscan"
             echo
@@ -757,16 +771,19 @@ jobs:
 
       - name: Semgrep — p/javascript + p/typescript
         # Semgrep Community Edition (LGPL-2.1) with the open
-        # rulesets. `--error` makes findings hard-fail; `--quiet`
-        # silences the per-file progress so the summary stays
-        # readable.
+        # rulesets. `--error` makes findings hard-fail. We *don't*
+        # use `--quiet` because it suppresses the Scan Summary too,
+        # leaving the CI step summary empty on success runs.
+        # NO_COLOR keeps ANSI escapes out of \$GITHUB_STEP_SUMMARY.
         shell: bash --noprofile --norc -eo pipefail {0}
+        env:
+          NO_COLOR: "1"
         run: |
           set +e
           semgrep \
             --config p/javascript \
             --config p/typescript \
-            --error --quiet \
+            --error \
             web/src 2>&1 | tee /tmp/semgrep.out
           RC=${PIPESTATUS[0]}
           {
