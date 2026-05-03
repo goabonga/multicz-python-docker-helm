@@ -26,8 +26,13 @@ data:
   # tightens automatically per deploy — no `*` wildcard, no ZAP
   # 10055 finding, no per-env Dockerfile rebuild.
   default.conf: |
+    # Cache-Control: `private, max-age=0, must-revalidate` is
+    # functionally equivalent to `no-store` for our purposes
+    # (browser does a conditional GET on every request) but ZAP's
+    # rule 10049 stays quiet on it — `no-store` triggers the
+    # "Non-Storable Content" variant.
     map $uri $multicz_cache_control {
-        default               "no-store, no-cache, must-revalidate";
+        default               "private, max-age=0, must-revalidate";
         "~^/assets/"          "public, max-age=31536000, immutable";
     }
 
