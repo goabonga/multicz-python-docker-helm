@@ -707,13 +707,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install njsscan
+      - name: Install njsscan + semgrep
         # njsscan's "Semantic Grep" phase shells out to a `semgrep`
-        # binary; without it the scanner crashes
-        # (FileNotFoundError: 'semgrep'). `--with semgrep` slots
-        # semgrep into the same uv tool venv so njsscan finds it on
-        # its own PATH.
-        run: uv tool install njsscan --with semgrep
+        # binary; without one on PATH the scanner crashes
+        # (FileNotFoundError: 'semgrep' → AttributeError: 'NoneType').
+        #
+        # `uv tool install njsscan --with semgrep` only puts
+        # semgrep inside njsscan's venv site-packages — no shim is
+        # created on \$PATH for it, so njsscan's subprocess.run can't
+        # find it. Installing semgrep as its own uv tool gives it a
+        # shim in ~/.local/bin which sits on \$PATH (setup-uv added
+        # it earlier in the job).
+        run: |
+          uv tool install semgrep
+          uv tool install njsscan
 
       - name: njsscan
         # njsscan (LGPL-3.0) is a Node.js / JavaScript-focused SAST
