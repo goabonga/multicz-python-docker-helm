@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.2.7] - 2026-05-03
+
+### Dependencies
+
+- Track `chart-api` `0.0.5`
+
 ## [0.2.6] - 2026-05-03
 
 ### Dependencies

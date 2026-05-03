@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.0.5] - 2026-05-03
+
+### Dependencies
+
+- Track `api` `0.7.0`
+
 ## [0.0.4] - 2026-05-03
 
 ### Dependencies

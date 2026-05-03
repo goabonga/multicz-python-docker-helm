@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.7.0] - 2026-05-03
+
+### Features
+
+- **integration**: behave api e2e + parallel e2e-{web,api} jobs (`075df24`)
+
 ## [0.6.0] - 2026-05-03
 
 ### Features
