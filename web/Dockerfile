@@ -10,8 +10,12 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+# Distroless nginx — runs as nonroot UID 65532, no shell, no package
+# manager. Default config listens on port 8080 (binding to <1024
+# requires root, which the image doesn't have). Webroot stays at
+# /usr/share/nginx/html so the build copy is unchanged.
+FROM cgr.dev/chainguard/nginx:latest AS runtime
 
 COPY --from=build /app/dist /usr/share/nginx/html
 
-EXPOSE 80
+EXPOSE 8080

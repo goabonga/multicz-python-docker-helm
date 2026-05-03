@@ -20,7 +20,10 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
-              containerPort: 80
+              # chainguard/nginx runs nonroot and binds 8080 (privileged
+              # ports require root). The Service still exposes 80
+              # externally via targetPort: http (named-port resolution).
+              containerPort: 8080
               protocol: TCP
           livenessProbe:
             httpGet:
