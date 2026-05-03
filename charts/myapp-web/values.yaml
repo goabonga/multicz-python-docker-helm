@@ -41,23 +41,37 @@ containerSecurityContext:
     drop:
       - ALL
 
-# nginx writes its pid + cache + logs to specific paths; with a
-# read-only root filesystem we mount emptyDirs at those paths.
+# With readOnlyRootFilesystem: true, nginx still needs writable
+# paths for its pid file, caches, logs, and request buffers. The
+# chainguard nginx config (cat /etc/nginx/nginx.conf) writes:
+#
+#   pid        /run/nginx.pid;
+#   error_log  /var/log/nginx/error.log;
+#   access_log /var/log/nginx/access.log;
+#
+# plus client_body / proxy / fastcgi temp files under
+# /var/lib/nginx/tmp/. fsGroup=65532 (set in podSecurityContext)
+# tells kubelet to chown each emptyDir mount, so the nonroot user
+# in the image can write.
 extraVolumeMounts:
-  - name: var-cache-nginx
+  - name: nginx-cache
     mountPath: /var/cache/nginx
-  - name: var-log-nginx
+  - name: nginx-log
     mountPath: /var/log/nginx
-  - name: var-run
-    mountPath: /var/run
+  - name: nginx-tmp
+    mountPath: /var/lib/nginx/tmp
+  - name: run
+    mountPath: /run
   - name: tmp
     mountPath: /tmp
 extraVolumes:
-  - name: var-cache-nginx
+  - name: nginx-cache
     emptyDir: {}
-  - name: var-log-nginx
+  - name: nginx-log
     emptyDir: {}
-  - name: var-run
+  - name: nginx-tmp
+    emptyDir: {}
+  - name: run
     emptyDir: {}
   - name: tmp
     emptyDir: {}
