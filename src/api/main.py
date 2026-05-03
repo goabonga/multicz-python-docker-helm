@@ -1,12 +1,27 @@
+import os
 import platform
 import time
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="multicz-demo")
 _started_at = time.monotonic()
+
+# CORS — allow the cross-origin browser fetches the SPA does when
+# the web frontend is built with VITE_API_URL pointed at a different
+# host (e.g. api.myapp.local). Origins are read from CORS_ORIGINS
+# (comma-separated) so production can pin to specific URLs; default
+# `*` is fine for the demo.
+_cors_origins = os.environ.get("CORS_ORIGINS", "*")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _cors_origins.split(",") if o.strip()],
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 
 @lru_cache(maxsize=1)

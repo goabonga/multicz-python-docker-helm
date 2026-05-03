@@ -121,6 +121,13 @@ jobs:
           context: web
           load: true
           tags: ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
+          # Bake the cross-origin api URL into the SPA bundle so
+          # `fetch(`${API_URL}/version`)` hits the api ingress (kind
+          # extraPortMapping 80 + /etc/hosts pin → ingress-nginx →
+          # api Service). The api allows the cross-origin via its
+          # CORS middleware (default origins=*).
+          build-args: |
+            VITE_API_URL=http://api.myapp.local
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 

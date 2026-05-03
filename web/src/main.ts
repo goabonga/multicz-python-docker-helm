@@ -1,5 +1,14 @@
 import { VERSION } from "./version.ts";
 
+// Where the SPA hits the api. Injected at build time via
+// `--build-arg VITE_API_URL=...` (vite substitutes
+// `import.meta.env.VITE_*` into the bundle). Default `/api` keeps
+// the same-origin pattern for `vite dev` setups behind a proxy or
+// a unified ingress; in the demo's kind deployment we set it to
+// `http://api.myapp.local` for cross-origin via the per-subchart
+// ingresses + CORS on the api.
+const API_URL = import.meta.env.VITE_API_URL ?? "/api";
+
 const app = document.querySelector<HTMLElement>("#app");
 if (!app) {
   throw new Error("missing #app mount point");
@@ -58,7 +67,7 @@ async function loadApiVersion(): Promise<void> {
   const target = document.querySelector<HTMLElement>("#api-version");
   if (!target) return;
   try {
-    const response = await fetch("/api/version");
+    const response = await fetch(`${API_URL}/version`);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -91,7 +100,7 @@ async function loadApiStatus(): Promise<void> {
   const target = document.querySelector<HTMLElement>("#api-status");
   if (!target) return;
   try {
-    const response = await fetch("/api/status");
+    const response = await fetch(`${API_URL}/status`);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }

@@ -1,5 +1,13 @@
 FROM node:24-alpine AS build
 
+# Build-time api endpoint for the SPA. Vite reads VITE_* env vars
+# at build and inlines them into the bundle. Default empty falls
+# back to "/api" inside main.ts. Pass with:
+#
+#   docker build --build-arg VITE_API_URL=https://api.example.com .
+ARG VITE_API_URL=""
+ENV VITE_API_URL=$VITE_API_URL
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
