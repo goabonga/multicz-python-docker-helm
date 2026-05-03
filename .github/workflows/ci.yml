@@ -154,8 +154,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   python-test:
-    needs: [detect, python-lint, python-format, python-typecheck]
-    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    # Cascade-skips when any of the three static jobs is skipped
+    # (detect filtered the stack out) or fails. No explicit detect
+    # gate needed.
+    needs: [python-lint, python-format, python-typecheck]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -238,8 +240,7 @@ jobs:
           PY
 
   python-audit:
-    needs: [detect, python-test]
-    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    needs: [python-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -277,8 +278,7 @@ jobs:
           exit "$RC"
 
   python-bandit:
-    needs: [detect, python-test]
-    if: contains(fromJson(needs.detect.outputs.changed), 'api')
+    needs: [python-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -524,8 +524,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   js-test:
-    needs: [detect, js-lint, js-format, js-typecheck]
-    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    needs: [js-lint, js-format, js-typecheck]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -621,8 +620,7 @@ jobs:
           PY
 
   js-audit:
-    needs: [detect, js-test]
-    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    needs: [js-test]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -659,8 +657,7 @@ jobs:
           exit "$RC"
 
   js-eslint-security:
-    needs: [detect, js-test]
-    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    needs: [js-test]
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -701,8 +698,7 @@ jobs:
           exit "$RC"
 
   js-njsscan:
-    needs: [detect, js-test]
-    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    needs: [js-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -740,8 +736,7 @@ jobs:
           exit "$RC"
 
   js-semgrep:
-    needs: [detect, js-test]
-    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    needs: [js-test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -962,15 +957,18 @@ jobs:
 
   helm-securities:
     # Runs after all chart-*-check jobs whenever any helm component
-    # changed. `!cancelled() && !failure()` lets us proceed even if
-    # some chart-*-check were skipped (their component didn't change),
-    # while still bailing out when an upstream actually failed.
-    needs: [detect, chart-api-check, chart-web-check, chart-check]
+    # changed. `!cancelled() && !failure()` overrides the default
+    # cascade-skip so partial-changes (only chart-api changed, the
+    # other two skipped) still let this job run; the result-check
+    # disjunction below ensures we DON'T run when every chart-*-check
+    # was skipped (no helm component changed).
+    needs: [chart-api-check, chart-web-check, chart-check]
     if: |
-      !cancelled() && !failure() &&
-      (contains(fromJson(needs.detect.outputs.changed), 'chart-api') ||
-       contains(fromJson(needs.detect.outputs.changed), 'chart-web') ||
-       contains(fromJson(needs.detect.outputs.changed), 'chart'))
+      !cancelled() && !failure() && (
+        needs.chart-api-check.result == 'success' ||
+        needs.chart-web-check.result == 'success' ||
+        needs.chart-check.result     == 'success'
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
