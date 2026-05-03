@@ -1,0 +1,21 @@
+# OWASP ZAP rule overrides for the owasp-web job — passed to
+# zap-baseline.py via `-c rules.tsv`. Api-only overrides live in
+# .zap-rules.tsv at the repo root (passed to zap-api-scan.py in
+# owasp-api).
+#
+# Format: <rule-id>\t<IGNORE|WARN|FAIL>\t<comment>
+# Tabs only — ZAP's parser rejects spaces.
+#
+# 10049 — Storable and Cacheable / Non-Storable Content.
+# Two-faced rule: warns on storable content (might leak via
+# shared caches) AND on non-storable content (worse perf). We
+# made an explicit, deliberate choice: `no-store` on the SPA
+# entry + runtime config, `immutable` on hashed assets. ZAP
+# comments either direction; nothing actionable left.
+10049	IGNORE	cache policy is deliberate — no-store on entry, immutable on hashed assets
+#
+# 10109 — Modern Web Application.
+# Informational notice: ZAP detected an SPA pattern (client-side
+# routing, no traditional links). Not a vulnerability, just a
+# scan-strategy hint for human reviewers.
+10109	IGNORE	informational SPA detection — not a vulnerability

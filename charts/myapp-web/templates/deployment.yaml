@@ -49,6 +49,15 @@ spec:
               mountPath: /usr/share/nginx/html/config.js
               subPath: config.js
               readOnly: true
+            # Templated nginx site config — overlays the standalone
+            # version baked into the image so the CSP `connect-src`
+            # can include the deploy-time apiUrl origin (no wildcard
+            # CSP, no ZAP 10055 finding). Same configmap, different
+            # subPath key.
+            - name: app-config
+              mountPath: /etc/nginx/conf.d/nginx.default.conf
+              subPath: default.conf
+              readOnly: true
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

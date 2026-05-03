@@ -1,0 +1,17 @@
+# OWASP ZAP rule overrides for the owasp-api job — passed to
+# zap-api-scan.py via `-c rules.tsv`. Web-only overrides live in
+# web/.zap-rules.tsv (passed to zap-baseline.py in owasp-web).
+#
+# Format: <rule-id>\t<IGNORE|WARN|FAIL>\t<comment>
+# Tabs only — ZAP's parser rejects spaces.
+#
+# 100001 — Unexpected Content-Type Was Returned (api-scan addon).
+# Triggered by zap-api-scan's cloud-metadata SSRF probe: it hits
+# AWS IMDS / GCP / Oracle OCI / Azure metadata paths and expects
+# either text/plain or a deny response. FastAPI returns its
+# default 404 JSON (`{"detail":"Not Found"}` with
+# `Content-Type: application/json`) which the rule flags as a
+# content-type mismatch. There's no real metadata leak — the
+# paths don't exist on the api — so this is a known false
+# positive on every FastAPI service.
+100001	IGNORE	cloud-metadata probe — FastAPI 404 JSON, no actual exposure

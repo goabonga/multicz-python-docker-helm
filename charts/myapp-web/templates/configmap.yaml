@@ -15,3 +15,54 @@ data:
     window.APP_CONFIG = {
       API_URL: {{ .Values.config.apiUrl | default "" | quote }},
     };
+
+  # Rendered into /etc/nginx/conf.d/nginx.default.conf via a
+  # subPath mount, replacing the standalone version baked into the
+  # image. The whole point of templating it here (instead of
+  # shipping a fixed config) is the CSP `connect-src`: when the
+  # SPA fetches a cross-origin api, that origin must be in the
+  # allow-list, and the origin is only known at deploy time. We
+  # inject .Values.config.apiUrl into connect-src so the policy
+  # tightens automatically per deploy — no `*` wildcard, no ZAP
+  # 10055 finding, no per-env Dockerfile rebuild.
+  default.conf: |
+    map $uri $multicz_cache_control {
+        default               "no-store, no-cache, must-revalidate";
+        "~^/assets/"          "public, max-age=31536000, immutable";
+    }
+
+    server {
+        listen       8080;
+        listen       [::]:8080;
+        server_name  _;
+        server_tokens off;
+
+        root  /usr/share/nginx/html;
+        index index.html;
+
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'{{ if and .Values.config.apiUrl (hasPrefix "http" .Values.config.apiUrl) }} {{ .Values.config.apiUrl }}{{ end }}; img-src 'self' data:; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
+        add_header Cross-Origin-Embedder-Policy "require-corp" always;
+        add_header Cross-Origin-Opener-Policy "same-origin" always;
+        add_header Cross-Origin-Resource-Policy "same-origin" always;
+        add_header Cache-Control $multicz_cache_control always;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        error_page 404 = @notfound;
+        location @notfound {
+            default_type text/plain;
+            return 404 "404 Not Found\n";
+        }
+
+        error_page 500 502 503 504 = @servererror;
+        location @servererror {
+            default_type text/plain;
+            return 500 "500 Internal Server Error\n";
+        }
+    }

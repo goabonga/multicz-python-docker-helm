@@ -584,10 +584,14 @@ jobs:
         # `--add-host` injects api.myapp.local into the ZAP
         # container's /etc/hosts (--network host alone doesn't
         # share the runner's hosts file).
+        # `-c rules.tsv` loads .zap-rules.tsv (mounted into the
+        # ZAP wrk dir) — silences false positives like the
+        # cloud-metadata probe content-type mismatch.
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set +e
           mkdir -p /tmp/zap && chmod 777 /tmp/zap
+          cp .zap-rules.tsv /tmp/zap/rules.tsv
           docker run --rm \
             --network host \
             --add-host=api.myapp.local:127.0.0.1 \
@@ -596,6 +600,7 @@ jobs:
             zap-api-scan.py \
               -t http://api.myapp.local/openapi.json \
               -f openapi \
+              -c rules.tsv \
               -I \
               -r api-zap-report.html 2>&1 | tee /tmp/zap.out
           RC=${PIPESTATUS[0]}
@@ -717,10 +722,14 @@ jobs:
         # safe, no fuzzing of forms. Same -I (informational) flag
         # so the demo passes with a vanilla SPA; tighten by
         # dropping -I once you have a known baseline.
+        # `-c rules.tsv` loads web/.zap-rules.tsv — silences the
+        # web-specific false positives (cache policy two-way, SPA
+        # informational detection).
         shell: bash --noprofile --norc -eo pipefail {0}
         run: |
           set +e
           mkdir -p /tmp/zap && chmod 777 /tmp/zap
+          cp web/.zap-rules.tsv /tmp/zap/rules.tsv
           docker run --rm \
             --network host \
             --add-host=myapp.local:127.0.0.1 \
@@ -729,6 +738,7 @@ jobs:
             -t ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
               -t http://myapp.local \
+              -c rules.tsv \
               -I \
               -r web-zap-report.html 2>&1 | tee /tmp/zap.out
           RC=${PIPESTATUS[0]}
