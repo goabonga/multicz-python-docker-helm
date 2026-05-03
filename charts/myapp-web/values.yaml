@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/example/web
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   # Defaults to .Chart.AppVersion when empty.
   tag: ""
 
@@ -20,6 +20,52 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
+
+# Hardened defaults — chainguard nginx already runs as nonroot UID
+# 65532 but checkov wants the spec explicit.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# nginx writes its pid + cache + logs to specific paths; with a
+# read-only root filesystem we mount emptyDirs at those paths.
+extraVolumeMounts:
+  - name: var-cache-nginx
+    mountPath: /var/cache/nginx
+  - name: var-log-nginx
+    mountPath: /var/log/nginx
+  - name: var-run
+    mountPath: /var/run
+  - name: tmp
+    mountPath: /tmp
+extraVolumes:
+  - name: var-cache-nginx
+    emptyDir: {}
+  - name: var-log-nginx
+    emptyDir: {}
+  - name: var-run
+    emptyDir: {}
+  - name: tmp
+    emptyDir: {}
+
+automountServiceAccountToken: false
+
+networkPolicy:
+  enabled: false
 
 resources:
   limits:

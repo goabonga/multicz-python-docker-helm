@@ -154,8 +154,13 @@ jobs:
       - name: Helm install umbrella in kind
         if: steps.bump.outputs.chart_version != ''
         run: |
+          # --namespace myapp matches the chart's hardened defaults
+          # (CKV_K8S_21 — no default namespace). pullPolicy=IfNotPresent
+          # forces helm to use the kind-loaded image instead of pulling
+          # from ghcr (where the image isn't yet pushed).
           helm install demo charts/myapp \
             --wait --timeout 120s \
+            --namespace myapp --create-namespace \
             --set "myapp-api.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/myapp" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
             --set "myapp-web.image.repository=ghcr.io/${{ steps.owner.outputs.value }}/web" \
@@ -168,9 +173,9 @@ jobs:
           WEB_EXPECTED: ${{ steps.bump.outputs.web_version }}
         run: |
           set -e
-          kubectl port-forward svc/demo-myapp-api 8000:8000 >/dev/null 2>&1 &
+          kubectl -n myapp port-forward svc/demo-myapp-api 8000:8000 >/dev/null 2>&1 &
           PF_API=$!
-          kubectl port-forward svc/demo-myapp-web 8080:80 >/dev/null 2>&1 &
+          kubectl -n myapp port-forward svc/demo-myapp-web 8080:80 >/dev/null 2>&1 &
           PF_WEB=$!
           trap 'kill $PF_API $PF_WEB 2>/dev/null || true' EXIT
 
@@ -198,7 +203,7 @@ jobs:
             else
               echo "| api \`/version\` | \`$API_EXPECTED\` | \`$GOT\` | ✗ |" >> "$GITHUB_STEP_SUMMARY"
               echo "::error::api /version returned '$GOT', expected '$API_EXPECTED'"
-              kubectl logs -l app.kubernetes.io/component=api --tail=50 || true
+              kubectl -n myapp logs -l app.kubernetes.io/component=api --tail=50 || true
               FAIL=1
             fi
           fi
@@ -211,7 +216,7 @@ jobs:
             else
               echo "| web \`/version.json\` | \`$WEB_EXPECTED\` | \`$GOT\` | ✗ |" >> "$GITHUB_STEP_SUMMARY"
               echo "::error::web /version.json returned '$GOT', expected '$WEB_EXPECTED'"
-              kubectl logs -l app.kubernetes.io/component=web --tail=50 || true
+              kubectl -n myapp logs -l app.kubernetes.io/component=web --tail=50 || true
               FAIL=1
             fi
           fi

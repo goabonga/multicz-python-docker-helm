@@ -2,7 +2,9 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/example/myapp
-  pullPolicy: IfNotPresent
+  # Always: re-pull on every container start. Production-friendly
+  # default. Local installs (kind smoke) override to IfNotPresent.
+  pullPolicy: Always
   # Defaults to .Chart.AppVersion when empty.
   tag: ""
 
@@ -20,6 +22,45 @@ ingress:
         - path: /
           pathType: Prefix
   tls: []
+
+# Hardened defaults — the chainguard image already runs as nonroot
+# (UID 65532) but checkov wants the spec explicit.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# /tmp is the only writable path the FastAPI app needs at runtime
+# (uvicorn occasionally writes there). With readOnlyRootFilesystem
+# we mount an emptyDir.
+extraVolumeMounts:
+  - name: tmp
+    mountPath: /tmp
+extraVolumes:
+  - name: tmp
+    emptyDir: {}
+
+# Service-account token mounting is only needed when the pod talks
+# to the Kubernetes API. This app doesn't, so opt out.
+automountServiceAccountToken: false
+
+# Off by default — flip to true (and tighten the policy) when you
+# wire this chart into a network-policy-aware cluster.
+networkPolicy:
+  enabled: false
 
 resources:
   limits:
