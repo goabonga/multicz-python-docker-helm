@@ -457,3 +457,273 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$RC"
+
+  owasp-api:
+    # OWASP ZAP DAST against the api's OpenAPI schema. Runs after
+    # e2e-api passes — no point scanning a broken deploy. Spins its
+    # own kind cluster (no cross-job kind reuse possible) and replays
+    # the same helm install before turning ZAP loose on
+    # http://api.myapp.local/openapi.json. `prepare` stays in needs
+    # alongside e2e-api so its outputs (versions, owner) remain
+    # accessible here — needs is non-transitive for outputs.
+    needs: [prepare, e2e-api]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: api-image
+          path: /tmp/images
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-image
+          path: /tmp/images
+      - uses: actions/download-artifact@v8
+        with:
+          name: subchart-bundle
+          path: charts/myapp/charts
+
+      - name: docker load
+        run: |
+          docker load -i /tmp/images/api.tar
+          docker load -i /tmp/images/web.tar
+
+      - uses: azure/setup-helm@v5
+
+      - name: Write kind config (ingress port mappings)
+        run: |
+          mkdir -p /tmp/kind
+          cat > /tmp/kind/config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              kubeadmConfigPatches:
+                - |
+                  kind: InitConfiguration
+                  nodeRegistration:
+                    kubeletExtraArgs:
+                      node-labels: "ingress-ready=true"
+              extraPortMappings:
+                - containerPort: 80
+                  hostPort: 80
+                  protocol: TCP
+          EOF
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: zap-api
+          config: /tmp/kind/config.yaml
+
+      - name: Install ingress-nginx + load images
+        run: |
+          kubectl apply -f \
+            https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl -n ingress-nginx \
+            rollout status deployment/ingress-nginx-controller --timeout=180s
+          kind load docker-image \
+            "ghcr.io/${{ needs.prepare.outputs.owner }}/myapp:${{ needs.prepare.outputs.api_version }}" \
+            --name zap-api
+          kind load docker-image \
+            "ghcr.io/${{ needs.prepare.outputs.owner }}/web:${{ needs.prepare.outputs.web_version }}" \
+            --name zap-api
+
+      - name: Helm install
+        run: |
+          helm install demo charts/myapp \
+            --wait --timeout 120s \
+            --namespace myapp --create-namespace \
+            --set "myapp-api.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/myapp" \
+            --set "myapp-api.image.pullPolicy=IfNotPresent" \
+            --set "myapp-api.ingress.enabled=true" \
+            --set "myapp-api.ingress.className=nginx" \
+            --set "myapp-web.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/web" \
+            --set "myapp-web.image.pullPolicy=IfNotPresent"
+
+      - name: Map ingress hostname to localhost
+        run: |
+          echo "127.0.0.1 api.myapp.local" | sudo tee -a /etc/hosts
+
+      - name: Wait for ingress to route
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://api.myapp.local/openapi.json && break
+            sleep 2
+          done
+
+      - name: OWASP ZAP api-scan (OpenAPI driven)
+        # zap-api-scan.py crawls the schema, fuzzes each declared
+        # endpoint, then runs the standard passive rules. Exit
+        # codes: 0 clean, 1 fail (configurable), 2 warnings.
+        # `-I` keeps WARN-level findings informational so a clean
+        # api passes without us pre-tuning the rule set.
+        # `--add-host` injects api.myapp.local into the ZAP
+        # container's /etc/hosts (--network host alone doesn't
+        # share the runner's hosts file).
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          mkdir -p /tmp/zap && chmod 777 /tmp/zap
+          docker run --rm \
+            --network host \
+            --add-host=api.myapp.local:127.0.0.1 \
+            -v /tmp/zap:/zap/wrk:rw \
+            -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+              -t http://api.myapp.local/openapi.json \
+              -f openapi \
+              -I \
+              -r api-zap-report.html 2>&1 | tee /tmp/zap.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## owasp-api"
+            echo
+            echo "**zap-api-scan** \`http://api.myapp.local/openapi.json\` — exit $RC"
+            echo
+            echo '```'
+            tail -n 80 /tmp/zap.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: zap-api-report
+          path: /tmp/zap/api-zap-report.html
+          retention-days: 30
+
+  owasp-web:
+    # OWASP ZAP baseline scan (passive rules only) against the SPA
+    # entry point — same kind/helm replay pattern as owasp-api.
+    needs: [prepare, e2e-web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: api-image
+          path: /tmp/images
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-image
+          path: /tmp/images
+      - uses: actions/download-artifact@v8
+        with:
+          name: subchart-bundle
+          path: charts/myapp/charts
+
+      - name: docker load
+        run: |
+          docker load -i /tmp/images/api.tar
+          docker load -i /tmp/images/web.tar
+
+      - uses: azure/setup-helm@v5
+
+      - name: Write kind config (ingress port mappings)
+        run: |
+          mkdir -p /tmp/kind
+          cat > /tmp/kind/config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          nodes:
+            - role: control-plane
+              kubeadmConfigPatches:
+                - |
+                  kind: InitConfiguration
+                  nodeRegistration:
+                    kubeletExtraArgs:
+                      node-labels: "ingress-ready=true"
+              extraPortMappings:
+                - containerPort: 80
+                  hostPort: 80
+                  protocol: TCP
+          EOF
+
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: zap-web
+          config: /tmp/kind/config.yaml
+
+      - name: Install ingress-nginx + load images
+        run: |
+          kubectl apply -f \
+            https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl -n ingress-nginx \
+            rollout status deployment/ingress-nginx-controller --timeout=180s
+          kind load docker-image \
+            "ghcr.io/${{ needs.prepare.outputs.owner }}/myapp:${{ needs.prepare.outputs.api_version }}" \
+            --name zap-web
+          kind load docker-image \
+            "ghcr.io/${{ needs.prepare.outputs.owner }}/web:${{ needs.prepare.outputs.web_version }}" \
+            --name zap-web
+
+      - name: Helm install (web ingress + apiUrl)
+        run: |
+          helm install demo charts/myapp \
+            --wait --timeout 120s \
+            --namespace myapp --create-namespace \
+            --set "myapp-api.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/myapp" \
+            --set "myapp-api.image.pullPolicy=IfNotPresent" \
+            --set "myapp-api.ingress.enabled=true" \
+            --set "myapp-api.ingress.className=nginx" \
+            --set "myapp-web.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/web" \
+            --set "myapp-web.image.pullPolicy=IfNotPresent" \
+            --set "myapp-web.ingress.enabled=true" \
+            --set "myapp-web.ingress.className=nginx" \
+            --set "myapp-web.config.apiUrl=http://api.myapp.local"
+
+      - name: Map ingress hostnames to localhost
+        run: |
+          echo "127.0.0.1 myapp.local api.myapp.local" | sudo tee -a /etc/hosts
+
+      - name: Wait for ingress to route
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://myapp.local/version.json && break
+            sleep 2
+          done
+
+      - name: OWASP ZAP baseline (passive rules over the SPA)
+        # zap-baseline.py is the spider + passive rule set — fast,
+        # safe, no fuzzing of forms. Same -I (informational) flag
+        # so the demo passes with a vanilla SPA; tighten by
+        # dropping -I once you have a known baseline.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          mkdir -p /tmp/zap && chmod 777 /tmp/zap
+          docker run --rm \
+            --network host \
+            --add-host=myapp.local:127.0.0.1 \
+            --add-host=api.myapp.local:127.0.0.1 \
+            -v /tmp/zap:/zap/wrk:rw \
+            -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+              -t http://myapp.local \
+              -I \
+              -r web-zap-report.html 2>&1 | tee /tmp/zap.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## owasp-web"
+            echo
+            echo "**zap-baseline** \`http://myapp.local\` — exit $RC"
+            echo
+            echo '```'
+            tail -n 80 /tmp/zap.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: zap-web-report
+          path: /tmp/zap/web-zap-report.html
+          retention-days: 30
