@@ -2,6 +2,20 @@
 
 All notable changes to this component are documented here.
 
+## [0.4.0] - 2026-05-03
+
+### Features
+
+- **security**: scope-split ZAP rule overrides + helm-templated CSP (`69330dd`)
+
+### Fixes
+
+- **web**: swap no-store for private+revalidate to drop ZAP 10049 (`5a276b5`)
+
+### Dependencies
+
+- Track `web` `0.8.0`
+
 ## [0.3.1] - 2026-05-03
 
 ### Dependencies
