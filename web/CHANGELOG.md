@@ -2,6 +2,14 @@
 
 All notable changes to this component are documented here.
 
+## [0.6.0] - 2026-05-03
+
+### Features
+
+- **web**: cucumber + playwright e2e suite, runnable against any BASE_URL (`f30a4d2`)
+- cross-origin api fetch wired via VITE_API_URL build-arg + CORS (`43ed2d0`)
+- **chart-web**: runtime SPA config via ConfigMap-rendered window.APP_CONFIG (`c51fafe`)
+
 ## [0.5.0] - 2026-05-03
 
 ### Features

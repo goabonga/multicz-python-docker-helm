@@ -2,6 +2,16 @@
 
 All notable changes to this component are documented here.
 
+## [0.3.0] - 2026-05-03
+
+### Features
+
+- **chart-web**: runtime SPA config via ConfigMap-rendered window.APP_CONFIG (`c51fafe`)
+
+### Dependencies
+
+- Track `web` `0.6.0`
+
 ## [0.2.0] - 2026-05-03
 
 ### Features

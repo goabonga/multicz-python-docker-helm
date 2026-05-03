@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.6.0] - 2026-05-03
+
+### Features
+
+- cross-origin api fetch wired via VITE_API_URL build-arg + CORS (`43ed2d0`)
+
 ## [0.5.0] - 2026-05-03
 
 ### Features
