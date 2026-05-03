@@ -2,6 +2,16 @@
 
 All notable changes to this component are documented here.
 
+## [0.4.1] - 2026-05-03
+
+### Fixes
+
+- **security**: externalize CSS to drop CSP unsafe-inline + handle remaining ZAP findings (`1ea7916`)
+
+### Dependencies
+
+- Track `web` `0.8.1`
+
 ## [0.4.0] - 2026-05-03
 
 ### Features
