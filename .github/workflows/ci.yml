@@ -712,7 +712,12 @@ jobs:
           python-version: "3.12"
 
       - name: Install njsscan
-        run: uv tool install njsscan
+        # njsscan's "Semantic Grep" phase shells out to a `semgrep`
+        # binary; without it the scanner crashes
+        # (FileNotFoundError: 'semgrep'). `--with semgrep` slots
+        # semgrep into the same uv tool venv so njsscan finds it on
+        # its own PATH.
+        run: uv tool install njsscan --with semgrep
 
       - name: njsscan
         # njsscan (LGPL-3.0) is a Node.js / JavaScript-focused SAST
