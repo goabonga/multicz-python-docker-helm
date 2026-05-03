@@ -350,3 +350,51 @@ jobs:
           fi
 
           [ "$FAIL" = "0" ]
+
+      # ---------- E2E (Cucumber + Playwright via the kind ingress) ----------
+
+      - uses: actions/setup-node@v6
+        if: steps.bump.outputs.chart_version != ''
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web devDeps + playwright chromium
+        if: steps.bump.outputs.chart_version != ''
+        working-directory: web
+        run: |
+          npm ci
+          npx playwright install chromium --with-deps
+
+      - name: Map ingress hostnames to localhost
+        if: steps.bump.outputs.chart_version != ''
+        # Playwright's chromium honours the Host header set by the URL
+        # itself (it doesn't expose easy per-request Host overrides),
+        # so we point myapp.local + api.myapp.local at 127.0.0.1 via
+        # /etc/hosts. kind's extraPortMappings forward 80 to the
+        # ingress controller, completing the chain.
+        run: |
+          echo "127.0.0.1 myapp.local api.myapp.local" | sudo tee -a /etc/hosts
+
+      - name: E2E (Cucumber + Playwright)
+        if: steps.bump.outputs.chart_version != ''
+        working-directory: web
+        env:
+          BASE_URL: http://myapp.local
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          npm run test:e2e 2>&1 | tee /tmp/e2e.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo
+            echo "### E2E (cucumber + playwright via ingress)"
+            echo
+            echo "**target**: \`\$BASE_URL=$BASE_URL\` — exit $RC"
+            echo
+            echo '```'
+            tail -n 50 /tmp/e2e.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
