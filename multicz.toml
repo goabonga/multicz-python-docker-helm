@@ -7,7 +7,7 @@ initial_version = "0.0.0"
 # appVersion (so `helm package` pins the image), which then cascades
 # patch-bumps onto chart-api.
 [components.api]
-paths      = ["src/**", "pyproject.toml", "tests/**", "/Dockerfile"]
+paths      = ["src/**", "pyproject.toml", "tests/**", "e2e/**", "/Dockerfile"]
 bump_files = [
     { file = "pyproject.toml", key = "project.version" },
     # Regex escape hatch: keep `__version__` in the package's __init__
