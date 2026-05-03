@@ -103,34 +103,48 @@ jobs:
             [ -n "$CHART"     ] && echo "| chart     | \`$CHART\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Compute lowercase owner
+      - name: Resolve current versions from working tree
+        # After `multicz bump --output json`, pyproject.toml +
+        # web/package.json reflect the bumped versions for the
+        # components that bumped, and stay at the previous version
+        # for those that didn't. We always need both images to
+        # deploy a working stack downstream — read the file values
+        # so the build tags are correct regardless of which
+        # component the diff touched.
         if: steps.plan.outputs.release == 'true'
-        id: owner
+        id: versions
         run: |
-          echo "value=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          API_VER=$(awk -F'"' '/^version =/{print $2; exit}' pyproject.toml)
+          WEB_VER=$(jq -r .version web/package.json)
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          echo "api=$API_VER"   >> "$GITHUB_OUTPUT"
+          echo "web=$WEB_VER"   >> "$GITHUB_OUTPUT"
+          echo "owner=$OWNER"   >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
         if: steps.plan.outputs.release == 'true'
 
+      # ALWAYS build both images. A chart-only bump still needs both
+      # api + web running to validate the deploy end-to-end.
       - name: Build api image
         id: build_api
-        if: steps.bump.outputs.api_version != ''
+        if: steps.plan.outputs.release == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
           load: true
-          tags: ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}
+          tags: ghcr.io/${{ steps.versions.outputs.owner }}/myapp:${{ steps.versions.outputs.api }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build web image
         id: build_web
-        if: steps.bump.outputs.web_version != ''
+        if: steps.plan.outputs.release == 'true'
         uses: docker/build-push-action@v7
         with:
           context: web
           load: true
-          tags: ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}
+          tags: ghcr.io/${{ steps.versions.outputs.owner }}/web:${{ steps.versions.outputs.web }}
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
 
@@ -138,36 +152,32 @@ jobs:
         if: steps.plan.outputs.release == 'true'
         run: |
           mkdir -p /tmp/images
-          if [ -n "${{ steps.bump.outputs.api_version }}" ]; then
-            docker save \
-              "ghcr.io/${{ steps.owner.outputs.value }}/myapp:${{ steps.bump.outputs.api_version }}" \
-              -o /tmp/images/api.tar
-          fi
-          if [ -n "${{ steps.bump.outputs.web_version }}" ]; then
-            docker save \
-              "ghcr.io/${{ steps.owner.outputs.value }}/web:${{ steps.bump.outputs.web_version }}" \
-              -o /tmp/images/web.tar
-          fi
+          docker save \
+            "ghcr.io/${{ steps.versions.outputs.owner }}/myapp:${{ steps.versions.outputs.api }}" \
+            -o /tmp/images/api.tar
+          docker save \
+            "ghcr.io/${{ steps.versions.outputs.owner }}/web:${{ steps.versions.outputs.web }}" \
+            -o /tmp/images/web.tar
 
       - uses: actions/upload-artifact@v7
-        if: steps.bump.outputs.api_version != ''
+        if: steps.plan.outputs.release == 'true'
         with:
           name: api-image
           path: /tmp/images/api.tar
           retention-days: 1
 
       - uses: actions/upload-artifact@v7
-        if: steps.bump.outputs.web_version != ''
+        if: steps.plan.outputs.release == 'true'
         with:
           name: web-image
           path: /tmp/images/web.tar
           retention-days: 1
 
       - uses: azure/setup-helm@v5
-        if: steps.bump.outputs.chart_version != ''
+        if: steps.plan.outputs.release == 'true'
 
       - name: Bundle subcharts for the smoke install
-        if: steps.bump.outputs.chart_version != ''
+        if: steps.plan.outputs.release == 'true'
         run: |
           mkdir -p charts/myapp/charts /tmp/subcharts
           helm package charts/myapp-api -d charts/myapp/charts
@@ -175,7 +185,7 @@ jobs:
           cp charts/myapp/charts/*.tgz /tmp/subcharts/
 
       - uses: actions/upload-artifact@v7
-        if: steps.bump.outputs.chart_version != ''
+        if: steps.plan.outputs.release == 'true'
         with:
           name: subchart-bundle
           path: /tmp/subcharts/
@@ -220,10 +230,22 @@ jobs:
           name: subchart-bundle
           path: charts/myapp/charts
 
-      - name: docker load
+      - name: docker load + extract image names
+        # docker save preserves tags; docker load echoes
+        # `Loaded image: <name>:<tag>` per image — extract that
+        # so downstream steps don't need needs.<X>.outputs.<version>.
+        # Each image's repo (everything before the final `:`) is
+        # then peeled off so helm install can override
+        # myapp-{api,web}.image.repository while letting Chart.yaml
+        # provide the tag via .Chart.AppVersion.
+        id: images
         run: |
-          docker load -i /tmp/images/api.tar
-          docker load -i /tmp/images/web.tar
+          API_IMAGE=$(docker load -i /tmp/images/api.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          WEB_IMAGE=$(docker load -i /tmp/images/web.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          echo "api=$API_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "web=$WEB_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "api_repo=${API_IMAGE%:*}" >> "$GITHUB_OUTPUT"
+          echo "web_repo=${WEB_IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@v5
 
@@ -258,23 +280,19 @@ jobs:
             https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
           kubectl -n ingress-nginx \
             rollout status deployment/ingress-nginx-controller --timeout=180s
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/myapp:${{ needs.prepare.outputs.api_version }}" \
-            --name e2e-api
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/web:${{ needs.prepare.outputs.web_version }}" \
-            --name e2e-api
+          kind load docker-image "${{ steps.images.outputs.api }}" --name e2e-api
+          kind load docker-image "${{ steps.images.outputs.web }}" --name e2e-api
 
       - name: Helm install
         run: |
           helm install demo charts/myapp \
             --wait --timeout 120s \
             --namespace myapp --create-namespace \
-            --set "myapp-api.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/myapp" \
+            --set "myapp-api.image.repository=${{ steps.images.outputs.api_repo }}" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
             --set "myapp-api.ingress.enabled=true" \
             --set "myapp-api.ingress.className=nginx" \
-            --set "myapp-web.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/web" \
+            --set "myapp-web.image.repository=${{ steps.images.outputs.web_repo }}" \
             --set "myapp-web.image.pullPolicy=IfNotPresent"
           {
             echo "## e2e-api"
@@ -345,10 +363,15 @@ jobs:
           name: subchart-bundle
           path: charts/myapp/charts
 
-      - name: docker load
+      - name: docker load + extract image names
+        id: images
         run: |
-          docker load -i /tmp/images/api.tar
-          docker load -i /tmp/images/web.tar
+          API_IMAGE=$(docker load -i /tmp/images/api.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          WEB_IMAGE=$(docker load -i /tmp/images/web.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          echo "api=$API_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "web=$WEB_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "api_repo=${API_IMAGE%:*}" >> "$GITHUB_OUTPUT"
+          echo "web_repo=${WEB_IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@v5
 
@@ -383,23 +406,19 @@ jobs:
             https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
           kubectl -n ingress-nginx \
             rollout status deployment/ingress-nginx-controller --timeout=180s
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/myapp:${{ needs.prepare.outputs.api_version }}" \
-            --name e2e-web
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/web:${{ needs.prepare.outputs.web_version }}" \
-            --name e2e-web
+          kind load docker-image "${{ steps.images.outputs.api }}" --name e2e-web
+          kind load docker-image "${{ steps.images.outputs.web }}" --name e2e-web
 
       - name: Helm install (web ingress + apiUrl pointed at api ingress)
         run: |
           helm install demo charts/myapp \
             --wait --timeout 120s \
             --namespace myapp --create-namespace \
-            --set "myapp-api.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/myapp" \
+            --set "myapp-api.image.repository=${{ steps.images.outputs.api_repo }}" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
             --set "myapp-api.ingress.enabled=true" \
             --set "myapp-api.ingress.className=nginx" \
-            --set "myapp-web.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/web" \
+            --set "myapp-web.image.repository=${{ steps.images.outputs.web_repo }}" \
             --set "myapp-web.image.pullPolicy=IfNotPresent" \
             --set "myapp-web.ingress.enabled=true" \
             --set "myapp-web.ingress.className=nginx" \
@@ -461,12 +480,13 @@ jobs:
   owasp-api:
     # OWASP ZAP DAST against the api's OpenAPI schema. Runs after
     # e2e-api passes — no point scanning a broken deploy. Spins its
-    # own kind cluster (no cross-job kind reuse possible) and replays
-    # the same helm install before turning ZAP loose on
-    # http://api.myapp.local/openapi.json. `prepare` stays in needs
-    # alongside e2e-api so its outputs (versions, owner) remain
-    # accessible here — needs is non-transitive for outputs.
-    needs: [prepare, e2e-api]
+    # own kind cluster (no cross-job kind reuse possible) and
+    # replays the same helm install before turning ZAP loose on
+    # http://api.myapp.local/openapi.json. Image repo + tag are
+    # extracted from `docker load` output so we don't need any
+    # `needs.prepare.outputs.*` plumbing — artifacts are
+    # workflow-run-scoped and stay reachable through download-artifact.
+    needs: [e2e-api]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -487,9 +507,14 @@ jobs:
           path: charts/myapp/charts
 
       - name: docker load
+        id: images
         run: |
-          docker load -i /tmp/images/api.tar
-          docker load -i /tmp/images/web.tar
+          API_IMAGE=$(docker load -i /tmp/images/api.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          WEB_IMAGE=$(docker load -i /tmp/images/web.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          echo "api=$API_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "web=$WEB_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "api_repo=${API_IMAGE%:*}" >> "$GITHUB_OUTPUT"
+          echo "web_repo=${WEB_IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@v5
 
@@ -524,23 +549,19 @@ jobs:
             https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
           kubectl -n ingress-nginx \
             rollout status deployment/ingress-nginx-controller --timeout=180s
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/myapp:${{ needs.prepare.outputs.api_version }}" \
-            --name zap-api
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/web:${{ needs.prepare.outputs.web_version }}" \
-            --name zap-api
+          kind load docker-image "${{ steps.images.outputs.api }}" --name zap-api
+          kind load docker-image "${{ steps.images.outputs.web }}" --name zap-api
 
       - name: Helm install
         run: |
           helm install demo charts/myapp \
             --wait --timeout 120s \
             --namespace myapp --create-namespace \
-            --set "myapp-api.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/myapp" \
+            --set "myapp-api.image.repository=${{ steps.images.outputs.api_repo }}" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
             --set "myapp-api.ingress.enabled=true" \
             --set "myapp-api.ingress.className=nginx" \
-            --set "myapp-web.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/web" \
+            --set "myapp-web.image.repository=${{ steps.images.outputs.web_repo }}" \
             --set "myapp-web.image.pullPolicy=IfNotPresent"
 
       - name: Map ingress hostname to localhost
@@ -599,7 +620,7 @@ jobs:
   owasp-web:
     # OWASP ZAP baseline scan (passive rules only) against the SPA
     # entry point — same kind/helm replay pattern as owasp-api.
-    needs: [prepare, e2e-web]
+    needs: [e2e-web]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -619,10 +640,15 @@ jobs:
           name: subchart-bundle
           path: charts/myapp/charts
 
-      - name: docker load
+      - name: docker load + extract image names
+        id: images
         run: |
-          docker load -i /tmp/images/api.tar
-          docker load -i /tmp/images/web.tar
+          API_IMAGE=$(docker load -i /tmp/images/api.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          WEB_IMAGE=$(docker load -i /tmp/images/web.tar | awk -F': ' '/Loaded image:/{print $2; exit}')
+          echo "api=$API_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "web=$WEB_IMAGE"          >> "$GITHUB_OUTPUT"
+          echo "api_repo=${API_IMAGE%:*}" >> "$GITHUB_OUTPUT"
+          echo "web_repo=${WEB_IMAGE%:*}" >> "$GITHUB_OUTPUT"
 
       - uses: azure/setup-helm@v5
 
@@ -657,23 +683,19 @@ jobs:
             https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
           kubectl -n ingress-nginx \
             rollout status deployment/ingress-nginx-controller --timeout=180s
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/myapp:${{ needs.prepare.outputs.api_version }}" \
-            --name zap-web
-          kind load docker-image \
-            "ghcr.io/${{ needs.prepare.outputs.owner }}/web:${{ needs.prepare.outputs.web_version }}" \
-            --name zap-web
+          kind load docker-image "${{ steps.images.outputs.api }}" --name zap-web
+          kind load docker-image "${{ steps.images.outputs.web }}" --name zap-web
 
       - name: Helm install (web ingress + apiUrl)
         run: |
           helm install demo charts/myapp \
             --wait --timeout 120s \
             --namespace myapp --create-namespace \
-            --set "myapp-api.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/myapp" \
+            --set "myapp-api.image.repository=${{ steps.images.outputs.api_repo }}" \
             --set "myapp-api.image.pullPolicy=IfNotPresent" \
             --set "myapp-api.ingress.enabled=true" \
             --set "myapp-api.ingress.className=nginx" \
-            --set "myapp-web.image.repository=ghcr.io/${{ needs.prepare.outputs.owner }}/web" \
+            --set "myapp-web.image.repository=${{ steps.images.outputs.web_repo }}" \
             --set "myapp-web.image.pullPolicy=IfNotPresent" \
             --set "myapp-web.ingress.enabled=true" \
             --set "myapp-web.ingress.className=nginx" \
