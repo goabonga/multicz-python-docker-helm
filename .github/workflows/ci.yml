@@ -593,8 +593,123 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit "$RC"
 
+  js-eslint-security:
+    needs: [detect, js-test]
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: ESLint with security plugins
+        # `eslint-plugin-security` (MIT) catches detect-eval,
+        # detect-non-literal-fs-filename, detect-object-injection, …
+        # `eslint-plugin-no-unsanitized` (MPL-2.0) flags innerHTML /
+        # document.write / insertAdjacentHTML with non-literal input.
+        # See web/eslint.config.js for the rule set; biome handles
+        # general lint + format separately.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          npx eslint src 2>&1 | tee /tmp/eslint-security.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## js-eslint-security"
+            echo
+            echo "**eslint** \`src\` (security + no-unsanitized plugins) — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/eslint-security.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
+  js-njsscan:
+    needs: [detect, js-test]
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install njsscan
+        run: uv tool install njsscan
+
+      - name: njsscan
+        # njsscan (LGPL-3.0) is a Node.js / JavaScript-focused SAST
+        # scanner from MobSF — pattern + semantic grep over the
+        # source. Default exit is non-zero on findings.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          njsscan web/src 2>&1 | tee /tmp/njsscan.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## js-njsscan"
+            echo
+            echo "**njsscan** \`web/src\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/njsscan.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
+  js-semgrep:
+    needs: [detect, js-test]
+    if: contains(fromJson(needs.detect.outputs.changed), 'web')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install semgrep (OSS engine)
+        run: uv tool install semgrep
+
+      - name: Semgrep — p/javascript + p/typescript
+        # Semgrep Community Edition (LGPL-2.1) with the open
+        # rulesets. `--error` makes findings hard-fail; `--quiet`
+        # silences the per-file progress so the summary stays
+        # readable.
+        shell: bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set +e
+          semgrep \
+            --config p/javascript \
+            --config p/typescript \
+            --error --quiet \
+            web/src 2>&1 | tee /tmp/semgrep.out
+          RC=${PIPESTATUS[0]}
+          {
+            echo "## js-semgrep"
+            echo
+            echo "**semgrep** \`p/javascript + p/typescript\` on \`web/src\` — exit $RC"
+            echo
+            echo '```'
+            cat /tmp/semgrep.out
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$RC"
+
   js-container:
-    needs: [js-audit]
+    needs: [js-audit, js-eslint-security, js-njsscan, js-semgrep]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

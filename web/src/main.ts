@@ -5,20 +5,54 @@ if (!app) {
   throw new Error("missing #app mount point");
 }
 
-app.innerHTML = `
-  <h1>multicz demo</h1>
-  <p>web <span class="version" data-testid="web-version">v${VERSION}</span></p>
-  <p>
-    Try fetching the api: <code>curl http://localhost:8000/version</code>
-  </p>
-  <p id="api-version" class="version" aria-busy="true">
-    api: <em>loading…</em>
-  </p>
-  <section id="api-status" aria-busy="true">
-    <h2>API status</h2>
-    <p><em>loading…</em></p>
-  </section>
-`;
+// DOM helper — text content goes through `textContent` rather than
+// being parsed as HTML, which is what `eslint-plugin-no-unsanitized`
+// asks us to do. Safer than `el.innerHTML = `${userInput}`` even
+// when the input is currently trusted.
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string> = {},
+  children: (Node | string)[] = [],
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    node.setAttribute(k, v);
+  }
+  for (const c of children) {
+    node.append(c);
+  }
+  return node;
+}
+
+const initialApiVersion = el(
+  "p",
+  { id: "api-version", class: "version", "aria-busy": "true" },
+  ["api: ", el("em", {}, ["loading…"])],
+);
+
+const initialApiStatus = el(
+  "section",
+  { id: "api-status", "aria-busy": "true" },
+  [el("h2", {}, ["API status"]), el("p", {}, [el("em", {}, ["loading…"])])],
+);
+
+app.replaceChildren(
+  el("h1", {}, ["multicz demo"]),
+  el("p", {}, [
+    "web ",
+    el(
+      "span",
+      { class: "version", "data-testid": "web-version" },
+      [`v${VERSION}`],
+    ),
+  ]),
+  el("p", {}, [
+    "Try fetching the api: ",
+    el("code", {}, ["curl http://localhost:8000/version"]),
+  ]),
+  initialApiVersion,
+  initialApiStatus,
+);
 
 async function loadApiVersion(): Promise<void> {
   const target = document.querySelector<HTMLElement>("#api-version");
@@ -29,9 +63,19 @@ async function loadApiVersion(): Promise<void> {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = (await response.json()) as { version: string };
-    target.innerHTML = `api: <span data-testid="api-version">v${data.version}</span>`;
+    target.replaceChildren(
+      "api: ",
+      el(
+        "span",
+        { "data-testid": "api-version" },
+        [`v${data.version}`],
+      ),
+    );
   } catch (err) {
-    target.innerHTML = `api: <span class="error">unavailable (${String(err)})</span>`;
+    target.replaceChildren(
+      "api: ",
+      el("span", { class: "error" }, [`unavailable (${String(err)})`]),
+    );
   } finally {
     target.removeAttribute("aria-busy");
   }
@@ -53,18 +97,18 @@ async function loadApiStatus(): Promise<void> {
     }
     const data = (await response.json()) as ApiStatus;
     const healthIcon = data.healthy ? "✓ healthy" : "✗ degraded";
-    target.innerHTML = `
-      <h2>API status</h2>
-      <ul>
-        <li>${healthIcon} (v${data.version})</li>
-        <li>uptime: ${data.uptime_s}s</li>
-      </ul>
-    `;
+    target.replaceChildren(
+      el("h2", {}, ["API status"]),
+      el("ul", {}, [
+        el("li", {}, [`${healthIcon} (v${data.version})`]),
+        el("li", {}, [`uptime: ${data.uptime_s}s`]),
+      ]),
+    );
   } catch (err) {
-    target.innerHTML = `
-      <h2>API status</h2>
-      <p class="error">unavailable (${String(err)})</p>
-    `;
+    target.replaceChildren(
+      el("h2", {}, ["API status"]),
+      el("p", { class: "error" }, [`unavailable (${String(err)})`]),
+    );
   } finally {
     target.removeAttribute("aria-busy");
   }
