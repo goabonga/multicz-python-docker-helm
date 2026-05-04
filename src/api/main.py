@@ -62,6 +62,17 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ping")
+def ping() -> dict[str, str]:
+    """Liveness probe with a tiny round-trip token.
+
+    Distinct from /health: /ping is meant for L4/L7 keepalive checks
+    and intentionally avoids any computation, so a hung dependency
+    can't drag down the readiness signal.
+    """
+    return {"pong": "ok"}
+
+
 @app.get("/version")
 def get_version() -> dict[str, str]:
     return {"version": _app_version()}
