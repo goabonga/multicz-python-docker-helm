@@ -49,6 +49,11 @@ const initialApiStatus = el(
 
 app.replaceChildren(
   el("h1", {}, ["multicz demo"]),
+  el(
+    "p",
+    { class: "tagline" },
+    ["Multi-component versioning for monorepos, in action."],
+  ),
   el("p", {}, [
     "web ",
     el(
