@@ -15,9 +15,13 @@ bump_files = [
     # surrounding code (docstrings, imports, …) is preserved as-is.
     { file = "src/api/__init__.py", key = 'regex:^__version__\s*=\s*"([^"]+)"' },
 ]
-mirrors    = [{ file = "charts/myapp-api/Chart.yaml", key = "appVersion" }]
 changelog  = "CHANGELOG.md"
 post_bump  = ["uv lock"]
+
+[[components.api.mirrors]]
+file             = "charts/myapp-api/Chart.yaml"
+key              = "appVersion"
+changelog_format = "chart-api now ships the api image at `{upstream_version}`"
 
 [[components.api.artifacts]]
 type = "docker"
@@ -32,9 +36,13 @@ bump_files = [
     { file = "web/package.json", key = "version" },
     { file = "web/src/version.ts", key = 'regex:export const VERSION\s*=\s*"([^"]+)"' },
 ]
-mirrors    = [{ file = "charts/myapp-web/Chart.yaml", key = "appVersion" }]
 changelog  = "web/CHANGELOG.md"
 post_bump  = ["npm --prefix web install --package-lock-only"]
+
+[[components.web.mirrors]]
+file             = "charts/myapp-web/Chart.yaml"
+key              = "appVersion"
+changelog_format = "chart-web now ships the web image at `{upstream_version}`"
 
 [[components.web.artifacts]]
 type = "docker"
@@ -47,8 +55,13 @@ ref  = "ghcr.io/example/web:{version}"
 [components.chart-api]
 paths      = ["charts/myapp-api/**"]
 bump_files = [{ file = "charts/myapp-api/Chart.yaml", key = "version" }]
-mirrors    = [{ file = "charts/myapp/Chart.yaml", key = 'regex:- name: myapp-api\s+version:\s+(\S+)' }]
 changelog  = "charts/myapp-api/CHANGELOG.md"
+
+[[components.chart-api.mirrors]]
+file              = "charts/myapp/Chart.yaml"
+key               = 'regex:- name: myapp-api\s+version:\s+(\S+)'
+changelog_section = "Subchart updates"
+changelog_format  = "Bump `myapp-api` dependency to `{upstream_version}`"
 
 [[components.chart-api.artifacts]]
 type = "helm"
@@ -58,8 +71,13 @@ ref  = "myapp-api-{version}.tgz"
 [components.chart-web]
 paths      = ["charts/myapp-web/**"]
 bump_files = [{ file = "charts/myapp-web/Chart.yaml", key = "version" }]
-mirrors    = [{ file = "charts/myapp/Chart.yaml", key = 'regex:- name: myapp-web\s+version:\s+(\S+)' }]
 changelog  = "charts/myapp-web/CHANGELOG.md"
+
+[[components.chart-web.mirrors]]
+file              = "charts/myapp/Chart.yaml"
+key               = 'regex:- name: myapp-web\s+version:\s+(\S+)'
+changelog_section = "Subchart updates"
+changelog_format  = "Bump `myapp-web` dependency to `{upstream_version}`"
 
 [[components.chart-web.artifacts]]
 type = "helm"
