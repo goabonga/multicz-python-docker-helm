@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.9.0] - 2026-05-04
+
+### Features
+
+- **api**: add /ping liveness endpoint (`3a0a755`)
+
 ## [0.8.0] - 2026-05-03
 
 ### Features

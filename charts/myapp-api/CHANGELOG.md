@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.0.7] - 2026-05-04
+
+### Dependencies
+
+- chart-api now ships the api image at `0.9.0`
+
 ## [0.0.6] - 2026-05-03
 
 ### Dependencies

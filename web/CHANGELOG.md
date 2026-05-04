@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.9.0] - 2026-05-04
+
+### Features
+
+- **web**: show project tagline below the title (`e7659e8`)
+
 ## [0.8.1] - 2026-05-03
 
 ### Fixes

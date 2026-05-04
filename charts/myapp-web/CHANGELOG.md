@@ -2,6 +2,12 @@
 
 All notable changes to this component are documented here.
 
+## [0.4.2] - 2026-05-04
+
+### Dependencies
+
+- chart-web now ships the web image at `0.9.0`
+
 ## [0.4.1] - 2026-05-03
 
 ### Fixes

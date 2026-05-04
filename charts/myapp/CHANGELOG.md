@@ -2,6 +2,13 @@
 
 All notable changes to this component are documented here.
 
+## [0.2.11] - 2026-05-04
+
+### Subchart updates
+
+- Bump `myapp-api` dependency to `0.0.7`
+- Bump `myapp-web` dependency to `0.4.2`
+
 ## [0.2.10] - 2026-05-03
 
 ### Dependencies
