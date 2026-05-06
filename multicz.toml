@@ -2,6 +2,10 @@
 commit_convention = "conventional"
 tag_format = "{component}-v{version}"
 initial_version = "0.0.0"
+# Opt in to post_bump shell hooks (e.g. `uv lock`, `npm install
+# --package-lock-only`). Default is "deny" — shell execution from
+# config is opt-in.
+post_bump_policy = "allow"
 
 # api: FastAPI app. Mirrors its version into the api subchart's
 # appVersion (so `helm package` pins the image), which then cascades
@@ -93,6 +97,11 @@ ref  = "myapp-web-{version}.tgz"
 paths      = ["charts/myapp/**"]
 bump_files = [{ file = "charts/myapp/Chart.yaml", key = "version" }]
 changelog  = "charts/myapp/CHANGELOG.md"
+# Regenerate Chart.lock + the cached *.tgz under charts/myapp/charts/
+# whenever a subchart bump rewrites the umbrella's `dependencies:`
+# block. Without this, `helm dep build` in CD would see a stale lock.
+# Detected by content-hash diff -> picked up into the release commit.
+post_bump  = ["helm dependency update charts/myapp"]
 
 [[components.chart.artifacts]]
 type = "helm"
